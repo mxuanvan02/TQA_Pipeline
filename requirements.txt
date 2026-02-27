@@ -1,0 +1,27 @@
+# ============================================================
+# TQA Pipeline - Requirements
+# ============================================================
+# Target Environment: Single consumer GPU (RTX 3090 / T4 / L4)
+# Strategy: Lightweight open-source models with 4-bit quantization
+# ============================================================
+
+# --- Stage 1: PDF Digitization ---
+marker-pdf>=1.0.0
+
+# --- Core ML Framework ---
+torch>=2.1.0
+transformers>=4.45.0
+accelerate>=0.34.0
+bitsandbytes>=0.44.0       # 4-bit quantization for consumer GPUs
+
+# --- Stage 2: VLM (Qwen2-VL-2B-Instruct) ---
+qwen-vl-utils>=0.0.8
+
+# --- Data Validation & Schema ---
+pydantic>=2.0.0
+
+# --- Image Processing ---
+Pillow>=10.0.0
+
+# --- Utilities ---
+tqdm>=4.66.0
