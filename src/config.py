@@ -173,7 +173,13 @@ class MarkerConfig:
     extract_images: bool = True
     paginate_output: bool = True
     output_format: str = "markdown"
-    batch_multiplier: int = 4         # marker batch multiplier (increased for L4)
+    batch_multiplier: int = 6         # marker batch multiplier (L4 optimized)
+
+    # Explicit surya batch sizes (override auto-detection for L4 GPU)
+    # These are set as env vars BEFORE surya imports
+    recognition_batch_size: int = 128  # bottleneck step — L4 has headroom
+    detector_batch_size: int = 36      # bbox detection
+    layout_batch_size: int = 36        # layout recognition
 
 
 # ─────────────────────────────────────────────
@@ -298,6 +304,10 @@ class GPUOptConfig:
 
     # torch.compile (experimental — may not work with all quantized models)
     use_torch_compile: bool = False
+
+    # torch.backends optimizations for inference
+    cudnn_benchmark: bool = True       # auto-tune convolution algorithms
+    matmul_precision: str = "medium"   # trade precision for speed (float32 matmul)
 
 
 # ─────────────────────────────────────────────

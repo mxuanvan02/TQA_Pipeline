@@ -13,6 +13,18 @@ Output: .md files   in /content/TQA_Pipeline/data/interim/<doc_stem>.md
 
 from __future__ import annotations
 
+# ─────────────────────────────────────────────
+# ⚡ GPU Optimization: MUST be set BEFORE surya/marker imports
+# These env vars control surya's internal batch sizes.
+# Default auto-detection is very conservative; explicit values
+# fill the L4's 22.5 GB VRAM properly.
+# ─────────────────────────────────────────────
+import os
+os.environ.setdefault("RECOGNITION_BATCH_SIZE", "128")  # OCR recognition (bottleneck)
+os.environ.setdefault("DETECTOR_BATCH_SIZE", "36")       # bbox detection
+os.environ.setdefault("LAYOUT_BATCH_SIZE", "36")         # layout analysis
+os.environ.setdefault("ORDER_BATCH_SIZE", "16")          # reading order
+
 import argparse
 import shutil
 import sys
@@ -29,6 +41,26 @@ from src.utils import (
 )
 
 log = get_logger("01_digitize")
+
+
+# ─────────────────────────────────────────────
+# ⚡ Torch Inference Optimizations
+# ─────────────────────────────────────────────
+def _apply_torch_optimizations() -> None:
+    """Apply torch.backends settings for faster GPU inference."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.backends.cudnn.benchmark = True  # auto-tune conv algorithms
+            torch.set_float32_matmul_precision("medium")  # speed > precision
+            log.info(
+                "⚡ Torch optimizations applied: cudnn.benchmark=True, "
+                "matmul_precision=medium, GPU=%s (%.1f GB free)",
+                torch.cuda.get_device_name(),
+                torch.cuda.mem_get_info()[0] / 1024**3,
+            )
+    except Exception as exc:
+        log.warning("⚠️ Could not apply torch optimizations: %s", exc)
 
 
 # ─────────────────────────────────────────────
@@ -149,6 +181,7 @@ def _convert_with_api(pdf_path: Path, cfg: MarkerConfig) -> tuple[str, dict]:
                 "extract_images": cfg.extract_images,
                 "paginate_output": cfg.paginate_output,
                 "output_format": cfg.output_format,
+                "batch_multiplier": cfg.batch_multiplier,  # ⚡ scale surya batch sizes
             },
         )
 
@@ -278,6 +311,13 @@ def main() -> None:
     args = parser.parse_args()
 
     log.info("🚀 Stage 1 — Multimodal Document Digitization")
+    _apply_torch_optimizations()
+    log.info(
+        "⚡ Surya batch sizes: RECOGNITION=%s, DETECTOR=%s, LAYOUT=%s",
+        os.environ.get("RECOGNITION_BATCH_SIZE"),
+        os.environ.get("DETECTOR_BATCH_SIZE"),
+        os.environ.get("LAYOUT_BATCH_SIZE"),
+    )
     results = run_digitization(limit=args.limit)
 
     if not results:
