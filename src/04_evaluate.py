@@ -19,8 +19,10 @@ import argparse
 import gc
 import json
 import re
+import shutil
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -29,12 +31,22 @@ from tqdm import tqdm
 from src.config import (
     CFG,
     ContextPayload,
+    DriveBackupConfig,
     EvalConfig,
     LLMConfig,
     PathConfig,
     TQARecord,
 )
-from src.utils import get_logger, load_json, save_json, save_jsonl
+from src.utils import (
+    get_logger,
+    load_drive_checkpoint,
+    load_json,
+    save_json,
+    save_jsonl,
+    sync_json_to_drive,
+    sync_to_drive,
+    verify_drive_mount,
+)
 
 log = get_logger("04_evaluate")
 
@@ -334,6 +346,7 @@ def run_evaluation(
     paths: PathConfig | None = None,
     llm_cfg: LLMConfig | None = None,
     eval_cfg: EvalConfig | None = None,
+    drive_cfg: DriveBackupConfig | None = None,
     limit: int | None = None,
 ) -> list[TQARecord]:
     """
@@ -348,6 +361,10 @@ def run_evaluation(
     paths = paths or CFG.paths
     llm_cfg = llm_cfg or CFG.llm
     eval_cfg = eval_cfg or CFG.evaluation
+    drive_cfg = drive_cfg or CFG.drive_backup
+
+    # Pre-flight: verify Drive mount
+    verify_drive_mount(drive_cfg)
 
     # Load raw QA pairs
     raw_pairs = load_json(paths.raw_qa_pairs)
@@ -362,9 +379,23 @@ def run_evaluation(
     evaluated: list[dict[str, Any]] = []
 
     for qa in tqdm(raw_pairs, desc="Evaluating QA pairs"):
+        qa_id = qa.get("qa_id", "unknown")
+        drive_qa_eval = drive_cfg.evaluated_qa_dir / f"{qa_id}.json"
+
+        # Checkpoint: Skip if QA is already evaluated on Drive
+        saved_eval = load_drive_checkpoint(drive_qa_eval, drive_cfg)
+        if saved_eval is not None:
+            evaluated.append(saved_eval)
+            continue
+
         result = judge.evaluate(qa)
         if result is not None:
             evaluated.append(result)
+
+            # Backup Evaluated Result to Drive (per-QA checkpoint)
+            sync_json_to_drive(
+                result, drive_qa_eval, drive_cfg,
+            )
 
     judge.unload()
 
@@ -381,6 +412,20 @@ def run_evaluation(
 
     # Save final dataset
     save_jsonl(records, paths.dataset_jsonl)
+
+    # ── Final Backups to Drive ──
+    sync_to_drive(
+        paths.filtered_qa_pairs,
+        drive_cfg.backup_base / "interim/filtered_qa_pairs.json",
+        drive_cfg,
+        label="filtered_qa_pairs.json",
+    )
+    sync_to_drive(
+        paths.dataset_jsonl,
+        drive_cfg.processed_dir / "dataset.jsonl",
+        drive_cfg,
+        label="dataset.jsonl (final output)",
+    )
 
     log.info(
         "🏁 Pipeline complete! %d records → %s",
@@ -412,3 +457,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

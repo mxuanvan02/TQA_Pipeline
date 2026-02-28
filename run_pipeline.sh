@@ -29,6 +29,27 @@ echo -e "${CYAN}  TQA Pipeline — Multimodal Text-to-QA Dataset    ${NC}"
 echo -e "${CYAN}═══════════════════════════════════════════════════${NC}"
 echo ""
 
+# ─── Pre-flight: Google Drive Mount Check ───
+DRIVE_PATH="/content/drive/MyDrive"
+if [ -d "$DRIVE_PATH" ] && [ "$(ls -A $DRIVE_PATH 2>/dev/null)" ]; then
+    echo -e "${GREEN}✅ Google Drive is mounted at ${DRIVE_PATH}${NC}"
+    BACKUP_DIR="/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup"
+    mkdir -p "$BACKUP_DIR"
+    echo -e "${GREEN}   Backup directory: ${BACKUP_DIR}${NC}"
+else
+    echo -e "${RED}⚠️  WARNING: Google Drive is NOT mounted!${NC}"
+    echo -e "${RED}   Backups will be DISABLED. Data exists only on volatile local disk.${NC}"
+    echo -e "${YELLOW}   To mount Drive, run: from google.colab import drive; drive.mount('/content/drive')${NC}"
+    echo ""
+    read -p "Continue without Drive backup? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo -e "${RED}Aborted. Mount Drive first, then re-run.${NC}"
+        exit 1
+    fi
+fi
+echo ""
+
 TOTAL_START=$(date +%s)
 
 # ─── Stage 1: Digitization ───

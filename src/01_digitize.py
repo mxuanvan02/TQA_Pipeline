@@ -19,8 +19,14 @@ import sys
 import time
 from pathlib import Path
 
-from src.config import CFG, MarkerConfig, PathConfig
-from src.utils import get_files, get_logger
+from src.config import CFG, DriveBackupConfig, MarkerConfig, PathConfig
+from src.utils import (
+    get_files,
+    get_logger,
+    restore_from_drive,
+    sync_to_drive,
+    verify_drive_mount,
+)
 
 log = get_logger("01_digitize")
 
@@ -33,6 +39,7 @@ def digitize_pdf(
     output_dir: Path,
     image_dir: Path,
     marker_cfg: MarkerConfig,
+    drive_cfg: DriveBackupConfig,
 ) -> Path | None:
     """
     Convert a single PDF to Markdown + extracted images using marker-pdf.
@@ -48,9 +55,29 @@ def digitize_pdf(
     md_output = output_dir / f"{doc_stem}.md"
     doc_image_dir = image_dir / doc_stem
 
-    # Skip if already processed
-    if md_output.exists():
+    # ── Google Drive Backup Paths (from centralized config) ──
+    drive_md = drive_cfg.interim_md / f"{doc_stem}.md"
+    drive_img_dir = drive_cfg.interim_images / doc_stem
+
+    # Skip if already processed locally OR backed up on Drive
+    if md_output.exists() or drive_md.exists():
         log.info("⏭️  Already processed: %s", doc_stem)
+
+        # Restore from Drive if local file is missing (new session)
+        if not md_output.exists() and drive_md.exists():
+            restore_from_drive(
+                drive_md, md_output, drive_cfg,
+                label=f"MD for {doc_stem}",
+            )
+
+            # Restore images too
+            if drive_img_dir.exists():
+                doc_image_dir.mkdir(parents=True, exist_ok=True)
+                for img in drive_img_dir.glob("*"):
+                    restore_from_drive(
+                        img, doc_image_dir / img.name, drive_cfg,
+                    )
+
         return md_output
 
     log.info("📄 Digitizing: %s", pdf_path.name)
@@ -79,6 +106,20 @@ def digitize_pdf(
 
         elapsed = time.perf_counter() - start
         log.info("  ✅ Done: %s (%.1fs, %d chars)", doc_stem, elapsed, len(md_text))
+
+        # ── Backup to Drive (using centralized utilities) ──
+        sync_to_drive(md_output, drive_md, drive_cfg, label=doc_stem)
+
+        if images:
+            for img_name in images.keys():
+                local_img = doc_image_dir / img_name
+                if local_img.exists():
+                    sync_to_drive(
+                        local_img,
+                        drive_img_dir / img_name,
+                        drive_cfg,
+                    )
+
         return md_output
 
     except Exception as exc:
@@ -169,6 +210,7 @@ def _convert_with_cli(pdf_path: Path, cfg: MarkerConfig) -> tuple[str, dict]:
 def run_digitization(
     paths: PathConfig | None = None,
     marker_cfg: MarkerConfig | None = None,
+    drive_cfg: DriveBackupConfig | None = None,
     limit: int | None = None,
 ) -> list[Path]:
     """
@@ -182,8 +224,12 @@ def run_digitization(
     """
     paths = paths or CFG.paths
     marker_cfg = marker_cfg or CFG.marker
+    drive_cfg = drive_cfg or CFG.drive_backup
 
     paths.ensure_dirs()
+
+    # Pre-flight: verify Drive mount
+    verify_drive_mount(drive_cfg)
 
     pdf_files = get_files(paths.raw, extension=".pdf")
     if not pdf_files:
@@ -202,6 +248,7 @@ def run_digitization(
             output_dir=paths.interim,
             image_dir=paths.interim_images,
             marker_cfg=marker_cfg,
+            drive_cfg=drive_cfg,
         )
         if md_path is not None:
             results.append(md_path)
@@ -240,3 +287,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

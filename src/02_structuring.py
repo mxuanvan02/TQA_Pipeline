@@ -32,8 +32,16 @@ import torch
 from PIL import Image
 from tqdm import tqdm
 
-from src.config import CFG, ChunkCleaningConfig, ChunkingConfig, PathConfig, VLMConfig
-from src.utils import get_files, get_logger, save_json
+from src.config import CFG, ChunkCleaningConfig, ChunkingConfig, DriveBackupConfig, PathConfig, VLMConfig
+from src.utils import (
+    get_files,
+    get_logger,
+    load_drive_checkpoint,
+    save_json,
+    sync_json_to_drive,
+    sync_to_drive,
+    verify_drive_mount,
+)
 
 log = get_logger("02_structuring")
 
@@ -487,6 +495,7 @@ def process_documents(
     vlm_cfg: VLMConfig | None = None,
     chunking_cfg: ChunkingConfig | None = None,
     cleaning_cfg: ChunkCleaningConfig | None = None,
+    drive_cfg: DriveBackupConfig | None = None,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """
@@ -502,6 +511,10 @@ def process_documents(
     vlm_cfg = vlm_cfg or CFG.vlm
     chunking_cfg = chunking_cfg or CFG.chunking
     cleaning_cfg = cleaning_cfg or CFG.chunk_cleaning
+    drive_cfg = drive_cfg or CFG.drive_backup
+
+    # Pre-flight: verify Drive mount
+    verify_drive_mount(drive_cfg)
 
     md_files = get_files(paths.interim, extension=".md")
     if not md_files:
@@ -519,6 +532,15 @@ def process_documents(
 
     for md_path in tqdm(md_files, desc="Processing documents"):
         doc_id = md_path.stem
+        drive_doc_ctx = drive_cfg.contexts_dir / f"{doc_id}.json"
+
+        # Checkpoint: Skip if Document Contexts already exist on Drive
+        saved_chunks = load_drive_checkpoint(drive_doc_ctx, drive_cfg)
+        if saved_chunks is not None:
+            all_contexts.extend(saved_chunks)
+            log.info("⏭️  Loaded processed contexts from Drive: %s", doc_id)
+            continue
+
         md_text = md_path.read_text(encoding="utf-8")
 
         # Resolve per-document image directory
@@ -536,6 +558,7 @@ def process_documents(
         chunks = clean_chunks(chunks, cleaning_cfg)
 
         # Process images with VLM (only on cleaned chunks)
+        doc_contexts = []
         for chunk in chunks:
             if chunk.image_paths:
                 has_images = True
@@ -545,6 +568,13 @@ def process_documents(
                 chunk.is_multimodal = True
 
             all_contexts.append(asdict(chunk))
+            doc_contexts.append(asdict(chunk))
+
+        # Backup Document Contexts to Drive (per-document checkpoint)
+        sync_json_to_drive(
+            doc_contexts, drive_doc_ctx, drive_cfg,
+            label=f"contexts for {doc_id}",
+        )
 
     # Free GPU
     if has_images:
@@ -552,6 +582,15 @@ def process_documents(
 
     # Save output
     save_json(all_contexts, paths.multimodal_contexts)
+
+    # Final Backup of aggregated file
+    sync_to_drive(
+        paths.multimodal_contexts,
+        drive_cfg.backup_base / "interim/multimodal_contexts.json",
+        drive_cfg,
+        label="multimodal_contexts.json",
+    )
+
     log.info(
         "🏁 Stage 2 complete: %d contexts from %d documents",
         len(all_contexts),
@@ -582,3 +621,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

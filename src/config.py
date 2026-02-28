@@ -175,7 +175,104 @@ class MarkerConfig:
 
 
 # ─────────────────────────────────────────────
-# 5 · Output Schema (Stage 5 — JSONL record)
+# 5 · Google Drive Backup Config (Session Resilience)
+# ─────────────────────────────────────────────
+@dataclass(frozen=True)
+class DriveBackupConfig:
+    """Centralized Google Drive backup paths for Colab session resilience.
+
+    Who:    All pipeline stages (01–04).
+    How:    Provides a single source of truth for Drive backup locations,
+            replaces hardcoded paths scattered across multiple files.
+    """
+
+    drive_root: Path = Path("/content/drive/MyDrive")
+    backup_base: Path = field(
+        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup")
+    )
+
+    # Stage 1 — Digitization
+    interim_md: Path = field(
+        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim")
+    )
+    interim_images: Path = field(
+        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/images")
+    )
+
+    # Stage 2 — Structuring
+    contexts_dir: Path = field(
+        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/contexts")
+    )
+
+    # Stage 3 — QAG
+    qa_chunks_dir: Path = field(
+        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/qa_chunks")
+    )
+
+    # Stage 4 — Evaluation
+    evaluated_qa_dir: Path = field(
+        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/evaluated_qa")
+    )
+
+    # Final outputs
+    processed_dir: Path = field(
+        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/processed")
+    )
+
+    def is_drive_mounted(self) -> bool:
+        """Check if Google Drive is actually mounted (not just a local dir).
+
+        Verifies that /content/drive/MyDrive is a real mount point,
+        not a directory accidentally created by mkdir(parents=True).
+        """
+        import os
+
+        drive_path = self.drive_root
+        if not drive_path.exists():
+            return False
+
+        # Check if it's a mount point (reliable on Linux/Colab)
+        if os.path.ismount(str(drive_path)):
+            return True
+
+        # Fallback: check if parent /content/drive is a mount point
+        if os.path.ismount("/content/drive"):
+            return True
+
+        # Fallback: check for typical Drive marker files/dirs
+        # Google Drive always has 'My Drive' content when mounted
+        if (drive_path / ".shortcut-targets-by-id").exists():
+            return True
+
+        # If the directory exists but is suspiciously empty, it's likely local
+        try:
+            contents = list(drive_path.iterdir())
+            return len(contents) > 0
+        except PermissionError:
+            return False
+
+    def ensure_dirs(self) -> None:
+        """Create all backup directories (only if Drive is mounted)."""
+        if not self.is_drive_mounted():
+            logger.warning(
+                "⚠️  Google Drive NOT mounted at %s — backups will be DISABLED",
+                self.drive_root,
+            )
+            return
+
+        for d in (
+            self.interim_md,
+            self.interim_images,
+            self.contexts_dir,
+            self.qa_chunks_dir,
+            self.evaluated_qa_dir,
+            self.processed_dir,
+        ):
+            d.mkdir(parents=True, exist_ok=True)
+
+
+# ─────────────────────────────────────────────
+# 6 · Output Schema (Stage 5 — JSONL record)
 # ─────────────────────────────────────────────
 class ContextPayload(BaseModel):
     """Nested object inside each dataset record."""
@@ -210,7 +307,7 @@ class TQARecord(BaseModel):
 
 
 # ─────────────────────────────────────────────
-# 6 · Aggregate Config Singleton
+# 7 · Aggregate Config Singleton
 # ─────────────────────────────────────────────
 @dataclass(frozen=True)
 class PipelineConfig:
@@ -224,6 +321,7 @@ class PipelineConfig:
     qag: QAGConfig = field(default_factory=QAGConfig)
     evaluation: EvalConfig = field(default_factory=EvalConfig)
     marker: MarkerConfig = field(default_factory=MarkerConfig)
+    drive_backup: DriveBackupConfig = field(default_factory=DriveBackupConfig)
 
 
 # Instantiate the global config

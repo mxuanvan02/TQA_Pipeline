@@ -17,16 +17,26 @@ import argparse
 import gc
 import json
 import re
+import shutil
 import sys
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 import torch
 from tqdm import tqdm
 
-from src.config import CFG, LLMConfig, PathConfig, QAGConfig
-from src.utils import get_logger, load_json, save_json
+from src.config import CFG, DriveBackupConfig, LLMConfig, PathConfig, QAGConfig
+from src.utils import (
+    get_logger,
+    load_drive_checkpoint,
+    load_json,
+    save_json,
+    sync_json_to_drive,
+    sync_to_drive,
+    verify_drive_mount,
+)
 
 log = get_logger("03_qag_generator")
 
@@ -239,7 +249,7 @@ def _parse_qa_xml(text: str) -> list[dict[str, Any]]:
             ca_text = ca_match.group(1).strip()
             # Split by A., B., C., D. or similar newline bullets
             lines = [ln.strip() for ln in ca_text.split("\n") if ln.strip()]
-            candidates = [ln for ln in lines if re.match(r"^[A-E][\.\)]", ln)]
+            candidates = [ln for ln in lines if re.match(r"^[A-E][\.)]", ln)]
             
             # Fallback if candidates failed to parse as A. B. C. D.
             if len(candidates) < 2:
@@ -265,6 +275,7 @@ def run_qag(
     paths: PathConfig | None = None,
     llm_cfg: LLMConfig | None = None,
     qag_cfg: QAGConfig | None = None,
+    drive_cfg: DriveBackupConfig | None = None,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """
@@ -279,6 +290,10 @@ def run_qag(
     paths = paths or CFG.paths
     llm_cfg = llm_cfg or CFG.llm
     qag_cfg = qag_cfg or CFG.qag
+    drive_cfg = drive_cfg or CFG.drive_backup
+
+    # Pre-flight: verify Drive mount
+    verify_drive_mount(drive_cfg)
 
     # Load contexts
     contexts = load_json(paths.multimodal_contexts)
@@ -292,6 +307,17 @@ def run_qag(
     for ctx in tqdm(contexts, desc="Generating QA pairs"):
         chunk_id = ctx.get("chunk_id", "unknown")
         doc_id = ctx.get("doc_id", "unknown")
+
+        drive_chunk_qa = drive_cfg.qa_chunks_dir / f"{chunk_id}.json"
+
+        # Checkpoint: Skip if QA pairs for this chunk already exist on Drive
+        saved_qa = load_drive_checkpoint(drive_chunk_qa, drive_cfg)
+        if saved_qa is not None:
+            all_qa_pairs.extend(saved_qa)
+            log.info("⏭️  Loaded processed QA pairs from Drive: %s", chunk_id)
+            continue
+
+        chunk_qa_pairs = []
 
         for bloom_level in qag_cfg.bloom_levels:
             qa_list = generator.generate_qa(
@@ -317,12 +343,29 @@ def run_qag(
                     "ground_truth": qa.get("ground_truth", ""),
                     "legal_rationale": qa.get("legal_rationale", ""),
                 }
+                chunk_qa_pairs.append(enriched)
                 all_qa_pairs.append(enriched)
 
+        # Backup Chunk QA to Drive (per-chunk checkpoint)
+        sync_json_to_drive(
+            chunk_qa_pairs, drive_chunk_qa, drive_cfg,
+            label=f"QA pairs for {chunk_id}",
+        )
+
+    # Free GPU
     generator.unload()
 
     # Save output
     save_json(all_qa_pairs, paths.raw_qa_pairs)
+
+    # Final Backup of aggregated file
+    sync_to_drive(
+        paths.raw_qa_pairs,
+        drive_cfg.backup_base / "interim/raw_qa_pairs.json",
+        drive_cfg,
+        label="raw_qa_pairs.json",
+    )
+
     log.info(
         "🏁 Stage 3 complete: %d QA pairs from %d contexts",
         len(all_qa_pairs),
@@ -353,3 +396,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
