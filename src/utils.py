@@ -361,3 +361,97 @@ def load_drive_checkpoint(
         logger.warning("  ⚠️  Corrupt checkpoint on Drive: %s (%s)", drive_path.name, e)
         return None
 
+
+# ─────────────────────────────────────────────
+# 6 · GPU Optimization Utilities
+# ─────────────────────────────────────────────
+def batched(iterable: list, batch_size: int):
+    """
+    Yield successive batches of *batch_size* from *iterable*.
+
+    Who:    Stages 2-4 for batch inference.
+    How:    Simple slice-based iterator, no padding.
+    Input:  List + batch size.
+    Output: Yields list slices.
+    """
+    for i in range(0, len(iterable), batch_size):
+        yield iterable[i : i + batch_size]
+
+
+def log_gpu_memory(label: str = "") -> None:
+    """
+    Log current GPU VRAM usage for monitoring.
+
+    Who:    Called periodically during batch inference.
+    How:    Uses torch.cuda to query allocated / reserved memory.
+    """
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return
+
+        alloc = torch.cuda.memory_allocated() / 1024**3
+        reserved = torch.cuda.memory_reserved() / 1024**3
+        total = torch.cuda.get_device_properties(0).total_mem / 1024**3
+
+        prefix = f"[{label}] " if label else ""
+        logger.info(
+            "  GPU VRAM: %s%.1f GB alloc / %.1f GB reserved / %.1f GB total",
+            prefix,
+            alloc,
+            reserved,
+            total,
+        )
+    except Exception:
+        pass  # non-critical logging
+
+
+def prefetch_batch_io(
+    items: list,
+    load_fn,
+    max_workers: int = 4,
+) -> list:
+    """
+    Load/preprocess a batch of items in parallel using threads.
+
+    Who:    Stages 2-4 for overlapping I/O with GPU compute.
+    How:    ThreadPoolExecutor for I/O-bound work (file reads, image opens).
+    Input:  List of items + a function to apply to each.
+    Output: List of results (same order as input).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    results = [None] * len(items)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_idx = {
+            executor.submit(load_fn, item): idx
+            for idx, item in enumerate(items)
+        }
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                results[idx] = future.result()
+            except Exception as e:
+                logger.warning("  Prefetch failed for item %d: %s", idx, e)
+                results[idx] = None
+
+    return results
+
+
+def setup_tokenizer_for_batch(tokenizer) -> None:
+    """
+    Configure a tokenizer for batched causal LM generation.
+
+    Who:    Stages 3-4 (QAGenerator, QAJudge).
+    How:    Sets left-padding (required for causal LM batch generation)
+            and ensures pad_token is defined.
+    Why:    Causal LMs generate from the right, so padding must be on the left
+            to keep the actual tokens right-aligned.
+    """
+    tokenizer.padding_side = "left"
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id

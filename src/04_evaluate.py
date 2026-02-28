@@ -11,6 +11,11 @@ How:    1. Score each QA pair on Groundedness, Multimodal Alignment,
         3. Format surviving records into the TQARecord JSONL schema.
 Input:  raw_qa_pairs.json (from Stage 3).
 Output: filtered_qa_pairs.json + dataset.jsonl.
+
+GPU Optimization (L4 — 22.5 GB VRAM):
+    - Batched evaluation: 32 QA pairs per batch (short 256-token output)
+    - Left-padding for causal LM batch generation
+    - Drive checkpointing per-batch for Colab resilience
 """
 
 from __future__ import annotations
@@ -33,16 +38,20 @@ from src.config import (
     ContextPayload,
     DriveBackupConfig,
     EvalConfig,
+    GPUOptConfig,
     LLMConfig,
     PathConfig,
     TQARecord,
 )
 from src.utils import (
+    batched,
     get_logger,
     load_drive_checkpoint,
     load_json,
+    log_gpu_memory,
     save_json,
     save_jsonl,
+    setup_tokenizer_for_batch,
     sync_json_to_drive,
     sync_to_drive,
     verify_drive_mount,
@@ -93,14 +102,14 @@ Respond with ONLY the XML tags.
 
 
 # ─────────────────────────────────────────────
-# Judge LLM
+# Judge LLM (with Batch Support)
 # ─────────────────────────────────────────────
 class QAJudge:
     """
     LLM-as-a-judge for QA pair quality evaluation.
 
     Who:    Qwen2.5-0.5B-Instruct (4-bit, deterministic temperature).
-    How:    Scores each QA pair on 3 criteria, returns normalized scores.
+    How:    Scores each QA pair on 3 criteria, supports batch inference.
     """
 
     def __init__(self, cfg: LLMConfig, eval_cfg: EvalConfig) -> None:
@@ -114,7 +123,7 @@ class QAJudge:
         if self._model is not None:
             return
 
-        log.info("⚖️  Loading Judge LLM: %s", self.cfg.model_name)
+        log.info("Loading Judge LLM: %s", self.cfg.model_name)
         start = time.perf_counter()
 
         from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -139,19 +148,15 @@ class QAJudge:
             trust_remote_code=True,
         )
 
+        # Configure tokenizer for batch inference
+        setup_tokenizer_for_batch(self._tokenizer)
+
         elapsed = time.perf_counter() - start
-        log.info("  ✅ Judge LLM loaded in %.1fs", elapsed)
+        log.info("  Judge LLM loaded in %.1fs", elapsed)
+        log_gpu_memory("QAJudge loaded")
 
-    def evaluate(self, qa: dict[str, Any]) -> dict[str, Any] | None:
-        """
-        Score a single QA pair.
-
-        Input:  Raw QA dict from Stage 3.
-        Output: QA dict enriched with evaluation scores, or None if parsing fails.
-        """
-        self._load()
-
-        # Build visual context string
+    def _build_prompt(self, qa: dict[str, Any]) -> str:
+        """Build a fully-formatted evaluation prompt for one QA pair."""
         visual_info = ""
         if qa.get("visual_descriptions"):
             descs = [d.get("summary", "") for d in qa["visual_descriptions"]]
@@ -169,37 +174,142 @@ class QAJudge:
             {"role": "user", "content": user_prompt},
         ]
 
-        try:
-            text = self._tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-            inputs = self._tokenizer(text, return_tensors="pt").to(self._model.device)
+        return self._tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
 
+    def evaluate(self, qa: dict[str, Any]) -> dict[str, Any] | None:
+        """
+        Score a single QA pair (backward compatible, uses batch-of-1).
+
+        Input:  Raw QA dict from Stage 3.
+        Output: QA dict enriched with evaluation scores, or None if fails.
+        """
+        results = self.evaluate_batch([qa])
+        return results[0] if results[0] is not None else None
+
+    def evaluate_batch(
+        self, qa_pairs: list[dict[str, Any]]
+    ) -> list[dict[str, Any] | None]:
+        """
+        Batch-evaluate multiple QA pairs.
+
+        Who:    The loaded Judge LLM (left-padded batch inference).
+        Input:  List of QA dicts from Stage 3.
+        Output: List of QA dicts enriched with eval_scores, or None per item.
+
+        GPU Optimization:
+            - Tokenizes all prompts together with padding
+            - Short max_new_tokens (256) allows large batch sizes (32+)
+            - Deterministic (do_sample=False) for consistent evaluation
+        """
+        self._load()
+
+        # Build all prompt strings
+        prompt_texts = []
+        for qa in qa_pairs:
+            try:
+                prompt_texts.append(self._build_prompt(qa))
+            except Exception as exc:
+                log.warning("  Prompt build failed for %s: %s",
+                            qa.get("qa_id", "?"), exc)
+                prompt_texts.append(None)
+
+        # Filter out failed prompts
+        valid_indices = [i for i, p in enumerate(prompt_texts) if p is not None]
+        valid_prompts = [prompt_texts[i] for i in valid_indices]
+
+        results: list[dict[str, Any] | None] = [None] * len(qa_pairs)
+
+        if not valid_prompts:
+            return results
+
+        try:
+            # Batch tokenize with left-padding
+            inputs = self._tokenizer(
+                valid_prompts,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=2048,
+            ).to(self._model.device)
+
+            prompt_len = inputs.input_ids.shape[1]
+
+            # Batch generate (deterministic for evaluation)
             with torch.no_grad():
                 outputs = self._model.generate(
                     **inputs,
                     max_new_tokens=256,
                     temperature=self.cfg.eval_temperature,
-                    do_sample=False,  # deterministic for evaluation
-                    pad_token_id=self._tokenizer.eos_token_id,
+                    do_sample=False,
+                    pad_token_id=self._tokenizer.pad_token_id,
                 )
 
-            response = self._tokenizer.decode(
-                outputs[0][inputs.input_ids.shape[1]:],
-                skip_special_tokens=True,
-            )
+            # Decode and parse each output
+            for batch_idx, valid_idx in enumerate(valid_indices):
+                response = self._tokenizer.decode(
+                    outputs[batch_idx][prompt_len:],
+                    skip_special_tokens=True,
+                )
 
-            scores = _parse_eval_xml(response)
-            if scores:
-                qa["eval_scores"] = scores
-                return qa
+                scores = _parse_eval_xml(response)
+                if scores:
+                    qa_pairs[valid_idx]["eval_scores"] = scores
+                    results[valid_idx] = qa_pairs[valid_idx]
+                else:
+                    log.debug("  Could not parse eval for %s",
+                              qa_pairs[valid_idx].get("qa_id", "?"))
 
-            log.debug("  ⚠️  Could not parse eval for %s", qa.get("qa_id", "?"))
-            return None
+            return results
 
         except Exception as exc:
-            log.warning("  ⚠️  Evaluation failed for %s: %s", qa.get("qa_id", "?"), exc)
-            return None
+            log.warning("  Batch evaluation failed: %s", exc)
+            log.info("  Falling back to sequential evaluation...")
+            return self._evaluate_sequential_fallback(
+                qa_pairs, valid_indices, valid_prompts
+            )
+
+    def _evaluate_sequential_fallback(
+        self,
+        qa_pairs: list[dict[str, Any]],
+        valid_indices: list[int],
+        valid_prompts: list[str],
+    ) -> list[dict[str, Any] | None]:
+        """Fallback: evaluate one-by-one if batch fails (e.g., OOM)."""
+        results: list[dict[str, Any] | None] = [None] * len(qa_pairs)
+
+        for batch_idx, valid_idx in enumerate(valid_indices):
+            try:
+                inputs = self._tokenizer(
+                    valid_prompts[batch_idx],
+                    return_tensors="pt",
+                ).to(self._model.device)
+
+                with torch.no_grad():
+                    outputs = self._model.generate(
+                        **inputs,
+                        max_new_tokens=256,
+                        temperature=self.cfg.eval_temperature,
+                        do_sample=False,
+                        pad_token_id=self._tokenizer.pad_token_id,
+                    )
+
+                response = self._tokenizer.decode(
+                    outputs[0][inputs.input_ids.shape[1]:],
+                    skip_special_tokens=True,
+                )
+
+                scores = _parse_eval_xml(response)
+                if scores:
+                    qa_pairs[valid_idx]["eval_scores"] = scores
+                    results[valid_idx] = qa_pairs[valid_idx]
+
+            except Exception as exc:
+                log.warning("  Sequential eval failed for %s: %s",
+                            qa_pairs[valid_idx].get("qa_id", "?"), exc)
+
+        return results
 
     def unload(self) -> None:
         """Release GPU memory."""
@@ -208,7 +318,7 @@ class QAJudge:
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        log.info("🗑️  Judge LLM unloaded")
+        log.info("  Judge LLM unloaded")
 
 
 def _parse_eval_xml(text: str) -> dict[str, Any] | None:
@@ -230,21 +340,18 @@ def _parse_eval_xml(text: str) -> dict[str, Any] | None:
         return None
 
     try:
-        # Extract binary score 1 or 0
         def _parse_binary(val: str) -> float:
             return 1.0 if "1" in val else 0.0
 
         scores["groundedness"] = _parse_binary(g_match.group(1))
         scores["multimodal_alignment"] = _parse_binary(m_match.group(1))
         scores["legal_fluency"] = _parse_binary(l_match.group(1))
-        
+
         if j_match:
             scores["justification"] = j_match.group(1).strip()
-            
-        # Overall is pass only if Groundedness and Legal Fluency pass.
-        # Multimodal is checked later in filter_qa_pairs based on `is_multimodal`
+
         scores["overall"] = 1.0 if (scores["groundedness"] == 1.0 and scores["legal_fluency"] == 1.0) else 0.0
-        
+
         return scores
 
     except Exception:
@@ -291,7 +398,7 @@ def filter_qa_pairs(
             filtered.append(qa)
 
     log.info(
-        "🔍 Filtering: %d / %d QA pairs passed (%.0f%% pass rate)",
+        "Filtering: %d / %d QA pairs passed (%.0f%% pass rate)",
         len(filtered),
         len(qa_pairs),
         100 * len(filtered) / max(len(qa_pairs), 1),
@@ -332,36 +439,43 @@ def format_to_tqa_records(
             )
             records.append(record)
         except Exception as exc:
-            log.warning("  ⚠️  Schema validation failed for %s: %s",
+            log.warning("  Schema validation failed for %s: %s",
                         qa.get("qa_id", "?"), exc)
 
-    log.info("📋 Formatted %d TQARecords", len(records))
+    log.info("Formatted %d TQARecords", len(records))
     return records
 
 
 # ─────────────────────────────────────────────
-# Pipeline Orchestration
+# Pipeline Orchestration (Batched)
 # ─────────────────────────────────────────────
 def run_evaluation(
     paths: PathConfig | None = None,
     llm_cfg: LLMConfig | None = None,
     eval_cfg: EvalConfig | None = None,
     drive_cfg: DriveBackupConfig | None = None,
+    gpu_cfg: GPUOptConfig | None = None,
     limit: int | None = None,
 ) -> list[TQARecord]:
     """
-    End-to-end Stage 4 + 5: evaluate, filter, format.
+    End-to-end Stage 4 + 5: evaluate, filter, format (BATCHED).
 
-    Who:    QAJudge + filter + TQARecord formatter.
-    Where:  data/interim/raw_qa_pairs.json → data/processed/dataset.jsonl
-    How:    Score → filter → format → save.
+    Who:    QAJudge (batched) + filter + TQARecord formatter.
+    Where:  data/interim/raw_qa_pairs.json -> data/processed/dataset.jsonl
+    How:    Batch score -> filter -> format -> save.
     Input:  raw_qa_pairs.json from Stage 3.
     Output: Final TQARecord list saved as JSONL.
+
+    GPU Optimization:
+        - eval_cfg.batch_size QA pairs evaluated per GPU batch (default 32)
+        - Short output (256 tokens) allows larger batches than Stage 3
+        - Drive checkpointing per-batch for resilience
     """
     paths = paths or CFG.paths
     llm_cfg = llm_cfg or CFG.llm
     eval_cfg = eval_cfg or CFG.evaluation
     drive_cfg = drive_cfg or CFG.drive_backup
+    gpu_cfg = gpu_cfg or CFG.gpu
 
     # Pre-flight: verify Drive mount
     verify_drive_mount(drive_cfg)
@@ -370,36 +484,67 @@ def run_evaluation(
     raw_pairs = load_json(paths.raw_qa_pairs)
     if limit:
         raw_pairs = raw_pairs[:limit]
-        log.info("🔒 Limited to %d QA pairs", limit)
+        log.info("Limited to %d QA pairs", limit)
 
-    log.info("📊 Evaluating %d raw QA pairs...", len(raw_pairs))
-
-    # ── Stage 4: Evaluate ──
-    judge = QAJudge(llm_cfg, eval_cfg)
+    # ── Separate cached vs. new QA pairs ──
+    new_pairs = []
     evaluated: list[dict[str, Any]] = []
 
-    for qa in tqdm(raw_pairs, desc="Evaluating QA pairs"):
+    for qa in raw_pairs:
         qa_id = qa.get("qa_id", "unknown")
         drive_qa_eval = drive_cfg.evaluated_qa_dir / f"{qa_id}.json"
 
-        # Checkpoint: Skip if QA is already evaluated on Drive
         saved_eval = load_drive_checkpoint(drive_qa_eval, drive_cfg)
         if saved_eval is not None:
             evaluated.append(saved_eval)
-            continue
+        else:
+            new_pairs.append(qa)
 
-        result = judge.evaluate(qa)
-        if result is not None:
-            evaluated.append(result)
+    if not new_pairs:
+        log.info("All %d QA pairs already evaluated (loaded from Drive cache)", len(raw_pairs))
+    else:
+        log.info(
+            "Evaluating %d new QA pairs (batch_size=%d), %d cached",
+            len(new_pairs), eval_cfg.batch_size, len(raw_pairs) - len(new_pairs),
+        )
 
-            # Backup Evaluated Result to Drive (per-QA checkpoint)
-            sync_json_to_drive(
-                result, drive_qa_eval, drive_cfg,
-            )
+        # ── Stage 4: Batched Evaluate ──
+        judge = QAJudge(llm_cfg, eval_cfg)
+        batch_count = 0
+        total_batches = (len(new_pairs) + eval_cfg.batch_size - 1) // eval_cfg.batch_size
 
-    judge.unload()
+        for batch_qa in tqdm(
+            batched(new_pairs, eval_cfg.batch_size),
+            total=total_batches,
+            desc="Eval Batches",
+        ):
+            batch_count += 1
 
-    log.info("  ✅ Successfully evaluated %d / %d pairs", len(evaluated), len(raw_pairs))
+            # Log GPU usage periodically
+            if batch_count % gpu_cfg.log_gpu_interval == 0:
+                log_gpu_memory(f"Eval batch {batch_count}/{total_batches}")
+
+            # Batch evaluate
+            batch_results = judge.evaluate_batch(batch_qa)
+
+            # Collect results & checkpoint to Drive
+            for qa_result in batch_results:
+                if qa_result is not None:
+                    evaluated.append(qa_result)
+
+                    # Per-QA Drive checkpoint
+                    qa_id = qa_result.get("qa_id", "unknown")
+                    drive_qa_eval = drive_cfg.evaluated_qa_dir / f"{qa_id}.json"
+                    sync_json_to_drive(qa_result, drive_qa_eval, drive_cfg)
+
+            # Periodic VRAM cleanup
+            if batch_count % gpu_cfg.empty_cache_interval == 0:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+        judge.unload()
+
+    log.info("  Successfully evaluated %d / %d pairs", len(evaluated), len(raw_pairs))
 
     # Filter below-threshold samples
     filtered = filter_qa_pairs(evaluated, eval_cfg)
@@ -428,9 +573,10 @@ def run_evaluation(
     )
 
     log.info(
-        "🏁 Pipeline complete! %d records → %s",
+        "Pipeline complete! %d records -> %s (batch_size=%d)",
         len(records),
         paths.dataset_jsonl,
+        eval_cfg.batch_size,
     )
     return records
 
@@ -443,18 +589,27 @@ def main() -> None:
         description="Stage 4-5: Evaluate QA pairs (LLM-as-judge) + format JSONL output"
     )
     parser.add_argument("--limit", type=int, default=None, help="Limit to N QA pairs")
+    parser.add_argument(
+        "--batch-size", type=int, default=None,
+        help="Override eval batch size (default: from config)",
+    )
     args = parser.parse_args()
 
-    log.info("🚀 Stage 4 — Evaluation (LLM-as-a-Judge)")
-    results = run_evaluation(limit=args.limit)
+    log.info("Stage 4 -- Evaluation (LLM-as-a-Judge, Batched)")
+
+    if args.batch_size:
+        from dataclasses import replace
+        eval_cfg = replace(CFG.evaluation, batch_size=args.batch_size)
+        results = run_evaluation(limit=args.limit, eval_cfg=eval_cfg)
+    else:
+        results = run_evaluation(limit=args.limit)
 
     if not results:
         log.warning("No records survived evaluation. Check thresholds or raw QA quality.")
         sys.exit(1)
 
-    log.info("✅ Final dataset: %d records", len(results))
+    log.info("Final dataset: %d records", len(results))
 
 
 if __name__ == "__main__":
     main()
-

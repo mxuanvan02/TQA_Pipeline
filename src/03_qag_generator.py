@@ -1,14 +1,20 @@
 """
 Stage 3 — Synthetic Question-Answer Generation (QAG)
 =====================================================
-Who:    Qwen2.5-1.5B-Instruct (or Gemma-2-2B-it) loaded in 4-bit.
+Who:    Qwen2.5-0.5B-Instruct (or 1.5B) loaded in 4-bit.
 Where:  Reads data/interim/multimodal_contexts.json
         Writes data/interim/raw_qa_pairs.json
 How:    For each context chunk, prompts the LLM to generate QA pairs at
         three Bloom's Taxonomy levels using Legal Syllogism reasoning.
-        Structured JSON output is enforced via prompt engineering.
+        Uses BATCHED inference to maximize GPU L4 utilization.
 Input:  multimodal_contexts.json (list of chunk records from Stage 2).
 Output: raw_qa_pairs.json (list of QA records with rationale).
+
+GPU Optimization (L4 — 22.5 GB VRAM):
+    - 4-bit Qwen-0.5B uses ~400 MB VRAM → massive headroom for batching
+    - Batch size 16: tokenize + generate 16 prompts simultaneously
+    - Left-padding for causal LM batched generation
+    - ThreadPool prefetch for I/O-bound prompt preparation
 """
 
 from __future__ import annotations
@@ -27,12 +33,15 @@ from typing import Any
 import torch
 from tqdm import tqdm
 
-from src.config import CFG, DriveBackupConfig, LLMConfig, PathConfig, QAGConfig
+from src.config import CFG, DriveBackupConfig, GPUOptConfig, LLMConfig, PathConfig, QAGConfig
 from src.utils import (
+    batched,
     get_logger,
     load_drive_checkpoint,
     load_json,
+    log_gpu_memory,
     save_json,
+    setup_tokenizer_for_batch,
     sync_json_to_drive,
     sync_to_drive,
     verify_drive_mount,
@@ -93,15 +102,15 @@ Respond with ONLY the XML tags. No explanations before or after.
 
 
 # ─────────────────────────────────────────────
-# LLM Loader
+# LLM Loader (with Batch Support)
 # ─────────────────────────────────────────────
 class QAGenerator:
     """
-    Lazy-loaded LLM for generating QA pairs.
+    Lazy-loaded LLM for generating QA pairs with batch inference.
 
-    Who:    Qwen2.5-1.5B-Instruct (4-bit quantized).
-    How:    Loaded once, reused across all chunks. Uses chat template
-            with system prompt for consistent formatting.
+    Who:    Qwen2.5-0.5B-Instruct (4-bit quantized).
+    How:    Loaded once, reused across all chunks. Supports both
+            single-sample and batched generation with left-padding.
     """
 
     def __init__(self, cfg: LLMConfig) -> None:
@@ -114,7 +123,7 @@ class QAGenerator:
         if self._model is not None:
             return
 
-        log.info("🧠 Loading LLM: %s (4-bit=%s)", self.cfg.model_name, self.cfg.load_in_4bit)
+        log.info("Loading LLM: %s (4-bit=%s)", self.cfg.model_name, self.cfg.load_in_4bit)
         start = time.perf_counter()
 
         from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -139,8 +148,39 @@ class QAGenerator:
             trust_remote_code=True,
         )
 
+        # Configure tokenizer for batch inference (left-padding for causal LM)
+        setup_tokenizer_for_batch(self._tokenizer)
+
         elapsed = time.perf_counter() - start
-        log.info("  ✅ LLM loaded in %.1fs", elapsed)
+        log.info("  LLM loaded in %.1fs", elapsed)
+        log_gpu_memory("QAGenerator loaded")
+
+    def _build_prompt(
+        self, context: dict[str, Any], bloom_level: str, n_questions: int = 1
+    ) -> str:
+        """Build a fully-formatted prompt string for one context + bloom level."""
+        visual_ctx = ""
+        if context.get("visual_descriptions"):
+            descs = [d.get("summary", "") for d in context["visual_descriptions"]]
+            visual_ctx = "## Visual Information:\n" + "\n".join(
+                f"- Image: {d}" for d in descs if d
+            )
+
+        user_prompt = QA_GENERATION_TEMPLATE.format(
+            n_questions=n_questions,
+            bloom_level=bloom_level,
+            context_text=context["text"][:2000],
+            visual_context=visual_ctx,
+        )
+
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        return self._tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
 
     def generate_qa(
         self,
@@ -150,42 +190,64 @@ class QAGenerator:
     ) -> list[dict[str, Any]]:
         """
         Generate QA pairs for a single context chunk at a given Bloom level.
+        (Kept for backward compatibility, uses batch-of-1 internally.)
 
-        Who:    The loaded LLM.
-        Input:  Context dict (from multimodal_contexts.json) + Bloom level.
-        Output: List of QA dicts with question, answers, ground_truth, rationale.
+        Input:  Context dict + Bloom level.
+        Output: List of QA dicts.
+        """
+        results = self.generate_qa_batch([context], bloom_level, n_questions)
+        return results[0] if results else []
+
+    def generate_qa_batch(
+        self,
+        contexts: list[dict[str, Any]],
+        bloom_level: str,
+        n_questions: int = 1,
+    ) -> list[list[dict[str, Any]]]:
+        """
+        Batch-generate QA pairs for multiple contexts at a given Bloom level.
+
+        Who:    The loaded LLM (with left-padding for batch inference).
+        Input:  List of context dicts + single Bloom level.
+        Output: List of lists — one list of QA dicts per context.
+
+        GPU Optimization:
+            - Tokenizes all prompts together with padding
+            - Runs model.generate() once for the entire batch
+            - L4 with 4-bit Qwen-0.5B can handle batch_size=16-32 easily
         """
         self._load()
 
-        # Build visual context string
-        visual_ctx = ""
-        if context.get("visual_descriptions"):
-            descs = [
-                d.get("summary", "") for d in context["visual_descriptions"]
-            ]
-            visual_ctx = "## Visual Information:\n" + "\n".join(
-                f"- Image: {d}" for d in descs if d
-            )
+        # Build all prompt strings
+        prompt_texts = []
+        for ctx in contexts:
+            try:
+                prompt_texts.append(self._build_prompt(ctx, bloom_level, n_questions))
+            except Exception as exc:
+                log.warning("  Prompt build failed for %s: %s",
+                            ctx.get("chunk_id", "?"), exc)
+                prompt_texts.append(None)
 
-        # Fill prompt template
-        user_prompt = QA_GENERATION_TEMPLATE.format(
-            n_questions=n_questions,
-            bloom_level=bloom_level,
-            context_text=context["text"][:2000],  # Truncate for context window
-            visual_context=visual_ctx,
-        )
+        # Filter out failed prompts, remember indices
+        valid_indices = [i for i, p in enumerate(prompt_texts) if p is not None]
+        valid_prompts = [prompt_texts[i] for i in valid_indices]
 
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ]
+        if not valid_prompts:
+            return [[] for _ in contexts]
 
         try:
-            text = self._tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-            inputs = self._tokenizer(text, return_tensors="pt").to(self._model.device)
+            # Batch tokenize with left-padding
+            inputs = self._tokenizer(
+                valid_prompts,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=2048,
+            ).to(self._model.device)
 
+            prompt_len = inputs.input_ids.shape[1]
+
+            # Batch generate
             with torch.no_grad():
                 outputs = self._model.generate(
                     **inputs,
@@ -194,20 +256,68 @@ class QAGenerator:
                     top_p=self.cfg.top_p,
                     do_sample=True,
                     repetition_penalty=self.cfg.repetition_penalty,
-                    pad_token_id=self._tokenizer.eos_token_id,
+                    pad_token_id=self._tokenizer.pad_token_id,
                 )
 
-            response = self._tokenizer.decode(
-                outputs[0][inputs.input_ids.shape[1]:],
-                skip_special_tokens=True,
-            )
+            # Decode each output in the batch
+            all_results: list[list[dict[str, Any]]] = [[] for _ in contexts]
 
-            return _parse_qa_xml(response)
+            for batch_idx, valid_idx in enumerate(valid_indices):
+                response = self._tokenizer.decode(
+                    outputs[batch_idx][prompt_len:],
+                    skip_special_tokens=True,
+                )
+                all_results[valid_idx] = _parse_qa_xml(response)
+
+            return all_results
 
         except Exception as exc:
-            log.warning("  ⚠️  QA generation failed for %s / %s: %s",
-                        context.get("chunk_id", "?"), bloom_level, exc)
-            return []
+            log.warning("  Batch QA generation failed: %s", exc)
+            # Fallback: try one-by-one
+            log.info("  Falling back to sequential generation...")
+            return self._generate_sequential_fallback(
+                contexts, valid_indices, valid_prompts, bloom_level
+            )
+
+    def _generate_sequential_fallback(
+        self,
+        contexts: list[dict[str, Any]],
+        valid_indices: list[int],
+        valid_prompts: list[str],
+        bloom_level: str,
+    ) -> list[list[dict[str, Any]]]:
+        """Fallback: generate one-by-one if batch fails (e.g., OOM)."""
+        all_results: list[list[dict[str, Any]]] = [[] for _ in contexts]
+
+        for batch_idx, valid_idx in enumerate(valid_indices):
+            try:
+                inputs = self._tokenizer(
+                    valid_prompts[batch_idx],
+                    return_tensors="pt",
+                ).to(self._model.device)
+
+                with torch.no_grad():
+                    outputs = self._model.generate(
+                        **inputs,
+                        max_new_tokens=self.cfg.max_new_tokens,
+                        temperature=self.cfg.temperature,
+                        top_p=self.cfg.top_p,
+                        do_sample=True,
+                        repetition_penalty=self.cfg.repetition_penalty,
+                        pad_token_id=self._tokenizer.pad_token_id,
+                    )
+
+                response = self._tokenizer.decode(
+                    outputs[0][inputs.input_ids.shape[1]:],
+                    skip_special_tokens=True,
+                )
+                all_results[valid_idx] = _parse_qa_xml(response)
+
+            except Exception as exc:
+                log.warning("  Sequential fallback failed for %s / %s: %s",
+                            contexts[valid_idx].get("chunk_id", "?"), bloom_level, exc)
+
+        return all_results
 
     def unload(self) -> None:
         """Release GPU memory."""
@@ -216,7 +326,7 @@ class QAGenerator:
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        log.info("🗑️  LLM unloaded, GPU memory freed")
+        log.info("  LLM unloaded, GPU memory freed")
 
 
 # ─────────────────────────────────────────────
@@ -230,10 +340,10 @@ def _parse_qa_xml(text: str) -> list[dict[str, Any]]:
           More stable than JSON parsing for 0.5B models.
     """
     pairs: list[dict[str, Any]] = []
-    
+
     # Extract blocks
     blocks = re.findall(r"<qa_pair>(.*?)</qa_pair>", text, re.DOTALL | re.IGNORECASE)
-    
+
     # If no <qa_pair> tags exist, perhaps it just spit out the tags directly
     if not blocks:
         blocks = [text]
@@ -243,18 +353,17 @@ def _parse_qa_xml(text: str) -> list[dict[str, Any]]:
         ca_match = re.search(r"<candidate_answers>(.*?)</candidate_answers>", block, re.DOTALL | re.IGNORECASE)
         gt_match = re.search(r"<ground_truth>(.*?)</ground_truth>", block, re.DOTALL | re.IGNORECASE)
         lr_match = re.search(r"<legal_rationale>(.*?)</legal_rationale>", block, re.DOTALL | re.IGNORECASE)
-        
+
         if q_match and ca_match and gt_match and lr_match:
             # Parse candidate answers string into a list
             ca_text = ca_match.group(1).strip()
-            # Split by A., B., C., D. or similar newline bullets
             lines = [ln.strip() for ln in ca_text.split("\n") if ln.strip()]
-            candidates = [ln for ln in lines if re.match(r"^[A-E][\.)]", ln)]
-            
+            candidates = [ln for ln in lines if re.match(r"^[A-E][\.).]", ln)]
+
             # Fallback if candidates failed to parse as A. B. C. D.
             if len(candidates) < 2:
                 candidates = lines
-                
+
             pairs.append({
                 "question": q_match.group(1).strip(),
                 "candidate_answers": candidates,
@@ -263,34 +372,41 @@ def _parse_qa_xml(text: str) -> list[dict[str, Any]]:
             })
 
     if not pairs:
-        log.debug("  ⚠️  Could not parse QA XML: %s...", text[:100])
-        
+        log.debug("  Could not parse QA XML: %s...", text[:100])
+
     return pairs
 
 
 # ─────────────────────────────────────────────
-# Pipeline Orchestration
+# Pipeline Orchestration (Batched)
 # ─────────────────────────────────────────────
 def run_qag(
     paths: PathConfig | None = None,
     llm_cfg: LLMConfig | None = None,
     qag_cfg: QAGConfig | None = None,
     drive_cfg: DriveBackupConfig | None = None,
+    gpu_cfg: GPUOptConfig | None = None,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """
     Generate QA pairs for all contexts across all Bloom levels.
 
-    Who:    QAGenerator (LLM wrapper).
-    Where:  data/interim/multimodal_contexts.json → data/interim/raw_qa_pairs.json
-    How:    For each context × Bloom level, generate N questions.
+    Who:    QAGenerator (batched LLM wrapper).
+    Where:  data/interim/multimodal_contexts.json -> data/interim/raw_qa_pairs.json
+    How:    Batches contexts together, generates N questions per batch per Bloom level.
     Input:  multimodal_contexts.json from Stage 2.
     Output: raw_qa_pairs.json — enriched QA records.
+
+    GPU Optimization:
+        - Processes contexts in batches of qag_cfg.batch_size (default 16)
+        - Each batch generates for one Bloom level at a time
+        - Drive checkpointing per-chunk (survives Colab disconnects)
     """
     paths = paths or CFG.paths
     llm_cfg = llm_cfg or CFG.llm
     qag_cfg = qag_cfg or CFG.qag
     drive_cfg = drive_cfg or CFG.drive_backup
+    gpu_cfg = gpu_cfg or CFG.gpu
 
     # Pre-flight: verify Drive mount
     verify_drive_mount(drive_cfg)
@@ -299,58 +415,96 @@ def run_qag(
     contexts = load_json(paths.multimodal_contexts)
     if limit:
         contexts = contexts[:limit]
-        log.info("🔒 Limited to %d contexts", limit)
+        log.info("Limited to %d contexts", limit)
 
-    generator = QAGenerator(llm_cfg)
+    # ── Separate cached vs. new contexts ──
+    new_contexts = []
     all_qa_pairs: list[dict[str, Any]] = []
 
-    for ctx in tqdm(contexts, desc="Generating QA pairs"):
+    for ctx in contexts:
         chunk_id = ctx.get("chunk_id", "unknown")
-        doc_id = ctx.get("doc_id", "unknown")
-
         drive_chunk_qa = drive_cfg.qa_chunks_dir / f"{chunk_id}.json"
 
-        # Checkpoint: Skip if QA pairs for this chunk already exist on Drive
         saved_qa = load_drive_checkpoint(drive_chunk_qa, drive_cfg)
         if saved_qa is not None:
             all_qa_pairs.extend(saved_qa)
-            log.info("⏭️  Loaded processed QA pairs from Drive: %s", chunk_id)
-            continue
+            log.info("  Loaded cached QA pairs from Drive: %s", chunk_id)
+        else:
+            new_contexts.append(ctx)
 
-        chunk_qa_pairs = []
+    if not new_contexts:
+        log.info("All %d contexts already processed (loaded from Drive cache)", len(contexts))
+        save_json(all_qa_pairs, paths.raw_qa_pairs)
+        return all_qa_pairs
 
+    log.info(
+        "Processing %d new contexts (batch_size=%d), %d cached",
+        len(new_contexts), qag_cfg.batch_size, len(contexts) - len(new_contexts),
+    )
+
+    generator = QAGenerator(llm_cfg)
+    batch_count = 0
+    total_batches = (len(new_contexts) + qag_cfg.batch_size - 1) // qag_cfg.batch_size
+
+    # ── Process in batches ──
+    for batch_contexts in tqdm(
+        batched(new_contexts, qag_cfg.batch_size),
+        total=total_batches,
+        desc="QAG Batches",
+    ):
+        batch_count += 1
+
+        # Log GPU usage periodically
+        if batch_count % gpu_cfg.log_gpu_interval == 0:
+            log_gpu_memory(f"QAG batch {batch_count}/{total_batches}")
+
+        # For each Bloom level, batch-generate QA pairs
         for bloom_level in qag_cfg.bloom_levels:
-            qa_list = generator.generate_qa(
-                context=ctx,
+            batch_results = generator.generate_qa_batch(
+                contexts=batch_contexts,
                 bloom_level=bloom_level,
                 n_questions=qag_cfg.questions_per_level,
             )
 
-            for i, qa in enumerate(qa_list):
-                qa_id = f"{chunk_id}_{bloom_level.lower()}_{i}"
-                enriched = {
-                    "qa_id": qa_id,
-                    "doc_id": doc_id,
-                    "chunk_id": chunk_id,
-                    "domain_tag": "civil_law",
-                    "bloom_level": bloom_level,
-                    "context_text": ctx.get("text", ""),
-                    "context_visuals": ctx.get("image_paths", []),
-                    "visual_descriptions": ctx.get("visual_descriptions", []),
-                    "is_multimodal": ctx.get("is_multimodal", False),
-                    "question_content": qa.get("question", ""),
-                    "candidate_answers": qa.get("candidate_answers", []),
-                    "ground_truth": qa.get("ground_truth", ""),
-                    "legal_rationale": qa.get("legal_rationale", ""),
-                }
-                chunk_qa_pairs.append(enriched)
-                all_qa_pairs.append(enriched)
+            # Process results and enrich with metadata
+            for ctx_idx, (ctx, qa_list) in enumerate(zip(batch_contexts, batch_results)):
+                chunk_id = ctx.get("chunk_id", "unknown")
+                doc_id = ctx.get("doc_id", "unknown")
 
-        # Backup Chunk QA to Drive (per-chunk checkpoint)
-        sync_json_to_drive(
-            chunk_qa_pairs, drive_chunk_qa, drive_cfg,
-            label=f"QA pairs for {chunk_id}",
-        )
+                for i, qa in enumerate(qa_list):
+                    qa_id = f"{chunk_id}_{bloom_level.lower()}_{i}"
+                    enriched = {
+                        "qa_id": qa_id,
+                        "doc_id": doc_id,
+                        "chunk_id": chunk_id,
+                        "domain_tag": "civil_law",
+                        "bloom_level": bloom_level,
+                        "context_text": ctx.get("text", ""),
+                        "context_visuals": ctx.get("image_paths", []),
+                        "visual_descriptions": ctx.get("visual_descriptions", []),
+                        "is_multimodal": ctx.get("is_multimodal", False),
+                        "question_content": qa.get("question", ""),
+                        "candidate_answers": qa.get("candidate_answers", []),
+                        "ground_truth": qa.get("ground_truth", ""),
+                        "legal_rationale": qa.get("legal_rationale", ""),
+                    }
+                    all_qa_pairs.append(enriched)
+
+        # ── Per-chunk Drive checkpointing (after all Bloom levels for this batch) ──
+        for ctx in batch_contexts:
+            chunk_id = ctx.get("chunk_id", "unknown")
+            chunk_qa = [qa for qa in all_qa_pairs if qa.get("chunk_id") == chunk_id]
+            if chunk_qa:
+                drive_chunk_qa = drive_cfg.qa_chunks_dir / f"{chunk_id}.json"
+                sync_json_to_drive(
+                    chunk_qa, drive_chunk_qa, drive_cfg,
+                    label=f"QA pairs for {chunk_id}",
+                )
+
+        # Periodic VRAM cleanup
+        if batch_count % gpu_cfg.empty_cache_interval == 0:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     # Free GPU
     generator.unload()
@@ -367,9 +521,10 @@ def run_qag(
     )
 
     log.info(
-        "🏁 Stage 3 complete: %d QA pairs from %d contexts",
+        "Stage 3 complete: %d QA pairs from %d contexts (batch_size=%d)",
         len(all_qa_pairs),
         len(contexts),
+        qag_cfg.batch_size,
     )
     return all_qa_pairs
 
@@ -382,18 +537,28 @@ def main() -> None:
         description="Stage 3: Generate QA pairs via Bloom's Taxonomy + Legal Syllogism"
     )
     parser.add_argument("--limit", type=int, default=None, help="Limit to N contexts")
+    parser.add_argument(
+        "--batch-size", type=int, default=None,
+        help="Override batch size (default: from config)",
+    )
     args = parser.parse_args()
 
-    log.info("🚀 Stage 3 — Synthetic QAG Pipeline")
-    results = run_qag(limit=args.limit)
+    log.info("Stage 3 -- Synthetic QAG Pipeline (Batched)")
+
+    # Override batch size from CLI if provided
+    if args.batch_size:
+        from dataclasses import replace
+        qag_cfg = replace(CFG.qag, batch_size=args.batch_size)
+        results = run_qag(limit=args.limit, qag_cfg=qag_cfg)
+    else:
+        results = run_qag(limit=args.limit)
 
     if not results:
         log.warning("No QA pairs generated. Check multimodal_contexts.json.")
         sys.exit(1)
 
-    log.info("✅ Generated %d raw QA pairs", len(results))
+    log.info("Generated %d raw QA pairs", len(results))
 
 
 if __name__ == "__main__":
     main()
-

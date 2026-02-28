@@ -80,6 +80,7 @@ class VLMConfig:
     max_new_tokens: int = 512
     temperature: float = 0.3
     device_map: str = "auto"
+    batch_size: int = 8              # images per VLM batch (L4 can handle 16+)
 
 
 @dataclass(frozen=True)
@@ -146,7 +147,7 @@ class QAGConfig:
         "Apply",         # Level 3 — apply to new scenario
     )
     questions_per_level: int = 1      # per chunk, per Bloom level
-    batch_size: int = 4               # chunks processed in one batch
+    batch_size: int = 16              # chunks processed in one LLM batch (L4 optimized)
 
 
 @dataclass(frozen=True)
@@ -158,6 +159,7 @@ class EvalConfig:
     legal_fluency_threshold: float = 1.0    # 1 (Pass) or 0 (Fail)
     overall_threshold: float = 1.0          # Must pass all to be included
     score_scale: int = 1                    # Binary indicator
+    batch_size: int = 32                    # QA pairs per eval batch (short output → large batch)
 
 
 # ─────────────────────────────────────────────
@@ -171,7 +173,7 @@ class MarkerConfig:
     extract_images: bool = True
     paginate_output: bool = True
     output_format: str = "markdown"
-    batch_multiplier: int = 2         # marker batch multiplier
+    batch_multiplier: int = 4         # marker batch multiplier (increased for L4)
 
 
 # ─────────────────────────────────────────────
@@ -272,7 +274,34 @@ class DriveBackupConfig:
 
 
 # ─────────────────────────────────────────────
-# 6 · Output Schema (Stage 5 — JSONL record)
+# 6 · GPU Optimization Config
+# ─────────────────────────────────────────────
+@dataclass(frozen=True)
+class GPUOptConfig:
+    """GPU optimization settings tuned for NVIDIA L4 (22.5 GB VRAM).
+
+    Who:    All pipeline stages.
+    How:    Controls batch sizes, data prefetching, and memory management.
+    Why:    4-bit quantized models (Vintern-1B ~700MB, Qwen-0.5B ~400MB)
+            leave >20 GB VRAM free. Batching fills the GPU pipeline,
+            raising utilization from ~5% to 60-80%.
+    """
+
+    # Data loading
+    prefetch_workers: int = 4          # threads for async I/O (image load, tokenize)
+    pin_memory: bool = True            # faster host→device transfer
+    prefetch_factor: int = 2           # batches to prefetch ahead
+
+    # Memory management
+    empty_cache_interval: int = 50     # torch.cuda.empty_cache() every N batches
+    log_gpu_interval: int = 10         # log VRAM usage every N batches
+
+    # torch.compile (experimental — may not work with all quantized models)
+    use_torch_compile: bool = False
+
+
+# ─────────────────────────────────────────────
+# 7 · Output Schema (Stage 5 — JSONL record)
 # ─────────────────────────────────────────────
 class ContextPayload(BaseModel):
     """Nested object inside each dataset record."""
@@ -307,7 +336,7 @@ class TQARecord(BaseModel):
 
 
 # ─────────────────────────────────────────────
-# 7 · Aggregate Config Singleton
+# 8 · Aggregate Config Singleton
 # ─────────────────────────────────────────────
 @dataclass(frozen=True)
 class PipelineConfig:
@@ -322,6 +351,7 @@ class PipelineConfig:
     evaluation: EvalConfig = field(default_factory=EvalConfig)
     marker: MarkerConfig = field(default_factory=MarkerConfig)
     drive_backup: DriveBackupConfig = field(default_factory=DriveBackupConfig)
+    gpu: GPUOptConfig = field(default_factory=GPUOptConfig)
 
 
 # Instantiate the global config
