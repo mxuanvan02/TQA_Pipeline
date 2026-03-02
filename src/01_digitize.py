@@ -26,7 +26,7 @@ from src.config import CFG, DriveBackupConfig, MarkerConfig, PathConfig
 os.environ.setdefault("RECOGNITION_BATCH_SIZE", str(CFG.marker.recognition_batch_size))
 os.environ.setdefault("DETECTOR_BATCH_SIZE", str(CFG.marker.detector_batch_size))
 os.environ.setdefault("LAYOUT_BATCH_SIZE", str(CFG.marker.layout_batch_size))
-os.environ.setdefault("ORDER_BATCH_SIZE", str(CFG.marker.odrer_batch_size))
+os.environ.setdefault("ORDER_BATCH_SIZE", str(CFG.marker.order_batch_size))
 os.environ.setdefault("TABLE_REC_BATCH_SIZE", str(CFG.marker.table_rec_batch_size))
 os.environ.setdefault("EQUATION_BATCH_SIZE", str(CFG.marker.equation_batch_size))
 os.environ.setdefault("DATASET_NUM_WORKERS", str(CFG.marker.dataset_num_workers))
