@@ -20,10 +20,12 @@ from __future__ import annotations
 # fill the L4's 22.5 GB VRAM properly.
 # ─────────────────────────────────────────────
 import os
-os.environ.setdefault("RECOGNITION_BATCH_SIZE", "128")  # OCR recognition (bottleneck)
-os.environ.setdefault("DETECTOR_BATCH_SIZE", "36")       # bbox detection
-os.environ.setdefault("LAYOUT_BATCH_SIZE", "36")         # layout analysis
-os.environ.setdefault("ORDER_BATCH_SIZE", "16")          # reading order
+os.environ.setdefault("RECOGNITION_BATCH_SIZE", "256")  # OCR recognition (bottleneck)
+os.environ.setdefault("DETECTOR_BATCH_SIZE", "64")       # bbox detection
+os.environ.setdefault("LAYOUT_BATCH_SIZE", "64")         # layout analysis
+os.environ.setdefault("ORDER_BATCH_SIZE", "32")          # reading order
+# 🡒 ĐÃ THÊM MỚI: Tăng tốc độ nạp dữ liệu từ CPU lên GPU
+os.environ.setdefault("DATASET_NUM_WORKERS", "4") # Sử dụng 4 luồng I/O
 
 import argparse
 import shutil
@@ -52,7 +54,9 @@ def _apply_torch_optimizations() -> None:
         import torch
         if torch.cuda.is_available():
             torch.backends.cudnn.benchmark = True  # auto-tune conv algorithms
-            torch.set_float32_matmul_precision("medium")  # speed > precision
+            # 🡒 ĐÃ THAY ĐỔI: Kích hoạt High precision TF32 cho NVIDIA Ada Lovelace / L4
+            torch.set_float32_matmul_precision("high")
+            # torch.set_float32_matmul_precision("medium")  # speed > precision
             log.info(
                 "⚡ Torch optimizations applied: cudnn.benchmark=True, "
                 "matmul_precision=medium, GPU=%s (%.1f GB free)",

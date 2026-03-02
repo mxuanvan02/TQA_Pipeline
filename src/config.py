@@ -173,13 +173,13 @@ class MarkerConfig:
     extract_images: bool = True
     paginate_output: bool = True
     output_format: str = "markdown"
-    batch_multiplier: int = 6         # marker batch multiplier (L4 optimized)
+    batch_multiplier: int = 8         # marker batch multiplier (L4 optimized)
 
     # Explicit surya batch sizes (override auto-detection for L4 GPU)
     # These are set as env vars BEFORE surya imports
-    recognition_batch_size: int = 128  # bottleneck step — L4 has headroom
-    detector_batch_size: int = 36      # bbox detection
-    layout_batch_size: int = 36        # layout recognition
+    recognition_batch_size: int = 256  # bottleneck step — L4 has headroom
+    detector_batch_size: int = 64      # bbox detection
+    layout_batch_size: int = 64        # layout recognition
 
 
 # ─────────────────────────────────────────────
