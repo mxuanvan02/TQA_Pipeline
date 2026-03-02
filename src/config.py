@@ -175,12 +175,17 @@ class MarkerConfig:
     paginate_output: bool = True
     output_format: str = "markdown"
     batch_multiplier: int = 12        # marker batch multiplier (L4 optimized — higher fills VRAM)
+    parallel_workers: int = 2          # concurrent PDF processes (2×7GB ≈ 14GB on L4)
 
     # Explicit surya batch sizes (override auto-detection for L4 GPU)
     # These are set as env vars BEFORE surya imports
-    recognition_batch_size: int = 256  # bottleneck step — L4 has headroom
-    detector_batch_size: int = 64      # bbox detection
-    layout_batch_size: int = 64        # layout recognition
+    recognition_batch_size: int = 512  # bottleneck step — L4 has headroom
+    detector_batch_size: int = 128     # bbox detection
+    layout_batch_size: int = 128       # layout recognition
+    order_batch_size: int = 64         # reading order
+    table_rec_batch_size: int = 64     # table recognition
+    equation_batch_size: int = 64      # equation detection
+    dataset_num_workers: int = 4       # parallel data loading threads
 
 
 # ─────────────────────────────────────────────
