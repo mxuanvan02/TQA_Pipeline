@@ -23,10 +23,9 @@ import argparse
 import gc
 import json
 import re
-import shutil
 import sys
 import time
-import uuid
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +43,7 @@ from src.utils import (
     setup_tokenizer_for_batch,
     sync_json_to_drive,
     sync_to_drive,
+    try_torch_compile,
     verify_drive_mount,
 )
 
@@ -151,6 +151,9 @@ class QAGenerator:
         # Configure tokenizer for batch inference (left-padding for causal LM)
         setup_tokenizer_for_batch(self._tokenizer)
 
+        # Apply torch.compile for faster inference
+        self._model = try_torch_compile(self._model, CFG.gpu)
+
         elapsed = time.perf_counter() - start
         log.info("  LLM loaded in %.1fs", elapsed)
         log_gpu_memory("QAGenerator loaded")
@@ -248,7 +251,7 @@ class QAGenerator:
             prompt_len = inputs.input_ids.shape[1]
 
             # Batch generate
-            with torch.no_grad():
+            with torch.inference_mode():
                 outputs = self._model.generate(
                     **inputs,
                     max_new_tokens=self.cfg.max_new_tokens,
@@ -296,7 +299,7 @@ class QAGenerator:
                     return_tensors="pt",
                 ).to(self._model.device)
 
-                with torch.no_grad():
+                with torch.inference_mode():
                     outputs = self._model.generate(
                         **inputs,
                         max_new_tokens=self.cfg.max_new_tokens,
@@ -446,6 +449,11 @@ def run_qag(
     batch_count = 0
     total_batches = (len(new_contexts) + qag_cfg.batch_size - 1) // qag_cfg.batch_size
 
+    # Index for O(1) checkpoint lookups (replaces O(N*K) list scan)
+    qa_by_chunk: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for qa in all_qa_pairs:
+        qa_by_chunk[qa.get("chunk_id", "unknown")].append(qa)
+
     # ── Process in batches ──
     for batch_contexts in tqdm(
         batched(new_contexts, qag_cfg.batch_size),
@@ -458,42 +466,145 @@ def run_qag(
         if batch_count % gpu_cfg.log_gpu_interval == 0:
             log_gpu_memory(f"QAG batch {batch_count}/{total_batches}")
 
-        # For each Bloom level, batch-generate QA pairs
-        for bloom_level in qag_cfg.bloom_levels:
-            batch_results = generator.generate_qa_batch(
-                contexts=batch_contexts,
-                bloom_level=bloom_level,
-                n_questions=qag_cfg.questions_per_level,
-            )
+        # ── Merged Bloom: build ALL prompts (contexts × levels) in one batch ──
+        if qag_cfg.merge_bloom_levels:
+            # Build all prompts upfront: N contexts × 3 levels = 3N prompts
+            all_prompts: list[str | None] = []
+            prompt_map: list[tuple[int, str]] = []  # (ctx_idx, bloom_level)
 
-            # Process results and enrich with metadata
-            for ctx_idx, (ctx, qa_list) in enumerate(zip(batch_contexts, batch_results)):
-                chunk_id = ctx.get("chunk_id", "unknown")
-                doc_id = ctx.get("doc_id", "unknown")
+            for ctx_idx, ctx in enumerate(batch_contexts):
+                for bloom_level in qag_cfg.bloom_levels:
+                    try:
+                        all_prompts.append(
+                            generator._build_prompt(ctx, bloom_level, qag_cfg.questions_per_level)
+                        )
+                    except Exception:
+                        all_prompts.append(None)
+                    prompt_map.append((ctx_idx, bloom_level))
 
-                for i, qa in enumerate(qa_list):
-                    qa_id = f"{chunk_id}_{bloom_level.lower()}_{i}"
-                    enriched = {
-                        "qa_id": qa_id,
-                        "doc_id": doc_id,
-                        "chunk_id": chunk_id,
-                        "domain_tag": "civil_law",
-                        "bloom_level": bloom_level,
-                        "context_text": ctx.get("text", ""),
-                        "context_visuals": ctx.get("image_paths", []),
-                        "visual_descriptions": ctx.get("visual_descriptions", []),
-                        "is_multimodal": ctx.get("is_multimodal", False),
-                        "question_content": qa.get("question", ""),
-                        "candidate_answers": qa.get("candidate_answers", []),
-                        "ground_truth": qa.get("ground_truth", ""),
-                        "legal_rationale": qa.get("legal_rationale", ""),
-                    }
-                    all_qa_pairs.append(enriched)
+            # Filter valid prompts
+            valid_indices = [i for i, p in enumerate(all_prompts) if p is not None]
+            valid_prompts = [all_prompts[i] for i in valid_indices]
 
-        # ── Per-chunk Drive checkpointing (after all Bloom levels for this batch) ──
+            if valid_prompts:
+                try:
+                    # ONE batch generate for all contexts × all bloom levels
+                    generator._load()
+                    inputs = generator._tokenizer(
+                        valid_prompts,
+                        return_tensors="pt",
+                        padding=True,
+                        truncation=True,
+                        max_length=2048,
+                    ).to(generator._model.device)
+
+                    prompt_len = inputs.input_ids.shape[1]
+
+                    with torch.inference_mode():
+                        outputs = generator._model.generate(
+                            **inputs,
+                            max_new_tokens=llm_cfg.max_new_tokens,
+                            temperature=llm_cfg.temperature,
+                            top_p=llm_cfg.top_p,
+                            do_sample=True,
+                            repetition_penalty=llm_cfg.repetition_penalty,
+                            pad_token_id=generator._tokenizer.pad_token_id,
+                        )
+
+                    # Parse outputs and distribute to contexts × bloom levels
+                    for out_idx, valid_idx in enumerate(valid_indices):
+                        ctx_idx, bloom_level = prompt_map[valid_idx]
+                        response = generator._tokenizer.decode(
+                            outputs[out_idx][prompt_len:],
+                            skip_special_tokens=True,
+                        )
+                        qa_list = _parse_qa_xml(response)
+                        ctx = batch_contexts[ctx_idx]
+                        chunk_id = ctx.get("chunk_id", "unknown")
+                        doc_id = ctx.get("doc_id", "unknown")
+
+                        for i, qa in enumerate(qa_list):
+                            qa_id = f"{chunk_id}_{bloom_level.lower()}_{i}"
+                            enriched = {
+                                "qa_id": qa_id,
+                                "doc_id": doc_id,
+                                "chunk_id": chunk_id,
+                                "domain_tag": "civil_law",
+                                "bloom_level": bloom_level,
+                                "context_text": ctx.get("text", ""),
+                                "context_visuals": ctx.get("image_paths", []),
+                                "visual_descriptions": ctx.get("visual_descriptions", []),
+                                "is_multimodal": ctx.get("is_multimodal", False),
+                                "question_content": qa.get("question", ""),
+                                "candidate_answers": qa.get("candidate_answers", []),
+                                "ground_truth": qa.get("ground_truth", ""),
+                                "legal_rationale": qa.get("legal_rationale", ""),
+                            }
+                            all_qa_pairs.append(enriched)
+                            qa_by_chunk[chunk_id].append(enriched)
+
+                except Exception as exc:
+                    log.warning("  Merged bloom batch failed: %s, falling back to per-level", exc)
+                    # Fallback to per-level generation
+                    for bloom_level in qag_cfg.bloom_levels:
+                        batch_results = generator.generate_qa_batch(
+                            contexts=batch_contexts,
+                            bloom_level=bloom_level,
+                            n_questions=qag_cfg.questions_per_level,
+                        )
+                        for ctx_idx, (ctx, qa_list) in enumerate(zip(batch_contexts, batch_results)):
+                            chunk_id = ctx.get("chunk_id", "unknown")
+                            doc_id = ctx.get("doc_id", "unknown")
+                            for i, qa in enumerate(qa_list):
+                                qa_id = f"{chunk_id}_{bloom_level.lower()}_{i}"
+                                enriched = {
+                                    "qa_id": qa_id, "doc_id": doc_id,
+                                    "chunk_id": chunk_id, "domain_tag": "civil_law",
+                                    "bloom_level": bloom_level,
+                                    "context_text": ctx.get("text", ""),
+                                    "context_visuals": ctx.get("image_paths", []),
+                                    "visual_descriptions": ctx.get("visual_descriptions", []),
+                                    "is_multimodal": ctx.get("is_multimodal", False),
+                                    "question_content": qa.get("question", ""),
+                                    "candidate_answers": qa.get("candidate_answers", []),
+                                    "ground_truth": qa.get("ground_truth", ""),
+                                    "legal_rationale": qa.get("legal_rationale", ""),
+                                }
+                                all_qa_pairs.append(enriched)
+                                qa_by_chunk[chunk_id].append(enriched)
+        else:
+            # Original per-level generation (merge_bloom_levels=False)
+            for bloom_level in qag_cfg.bloom_levels:
+                batch_results = generator.generate_qa_batch(
+                    contexts=batch_contexts,
+                    bloom_level=bloom_level,
+                    n_questions=qag_cfg.questions_per_level,
+                )
+                for ctx_idx, (ctx, qa_list) in enumerate(zip(batch_contexts, batch_results)):
+                    chunk_id = ctx.get("chunk_id", "unknown")
+                    doc_id = ctx.get("doc_id", "unknown")
+                    for i, qa in enumerate(qa_list):
+                        qa_id = f"{chunk_id}_{bloom_level.lower()}_{i}"
+                        enriched = {
+                            "qa_id": qa_id, "doc_id": doc_id,
+                            "chunk_id": chunk_id, "domain_tag": "civil_law",
+                            "bloom_level": bloom_level,
+                            "context_text": ctx.get("text", ""),
+                            "context_visuals": ctx.get("image_paths", []),
+                            "visual_descriptions": ctx.get("visual_descriptions", []),
+                            "is_multimodal": ctx.get("is_multimodal", False),
+                            "question_content": qa.get("question", ""),
+                            "candidate_answers": qa.get("candidate_answers", []),
+                            "ground_truth": qa.get("ground_truth", ""),
+                            "legal_rationale": qa.get("legal_rationale", ""),
+                        }
+                        all_qa_pairs.append(enriched)
+                        qa_by_chunk[chunk_id].append(enriched)
+
+        # ── Per-chunk Drive checkpointing (O(1) lookup via dict) ──
         for ctx in batch_contexts:
             chunk_id = ctx.get("chunk_id", "unknown")
-            chunk_qa = [qa for qa in all_qa_pairs if qa.get("chunk_id") == chunk_id]
+            chunk_qa = qa_by_chunk.get(chunk_id, [])
             if chunk_qa:
                 drive_chunk_qa = drive_cfg.qa_chunks_dir / f"{chunk_id}.json"
                 sync_json_to_drive(

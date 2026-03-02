@@ -80,7 +80,7 @@ class VLMConfig:
     max_new_tokens: int = 512
     temperature: float = 0.3
     device_map: str = "auto"
-    batch_size: int = 8              # images per VLM batch (L4 can handle 16+)
+    batch_size: int = 16             # images per VLM batch (L4: true batched inference)
 
 
 @dataclass(frozen=True)
@@ -147,7 +147,8 @@ class QAGConfig:
         "Apply",         # Level 3 — apply to new scenario
     )
     questions_per_level: int = 1      # per chunk, per Bloom level
-    batch_size: int = 16              # chunks processed in one LLM batch (L4 optimized)
+    batch_size: int = 16              # contexts per batch (merged bloom: 16×3=48 prompts)
+    merge_bloom_levels: bool = True   # merge all bloom levels into one GPU call (3× speedup)
 
 
 @dataclass(frozen=True)
@@ -159,7 +160,7 @@ class EvalConfig:
     legal_fluency_threshold: float = 1.0    # 1 (Pass) or 0 (Fail)
     overall_threshold: float = 1.0          # Must pass all to be included
     score_scale: int = 1                    # Binary indicator
-    batch_size: int = 32                    # QA pairs per eval batch (short output → large batch)
+    batch_size: int = 64                    # QA pairs per eval batch (256-token output → large batch OK)
 
 
 # ─────────────────────────────────────────────
@@ -173,7 +174,7 @@ class MarkerConfig:
     extract_images: bool = True
     paginate_output: bool = True
     output_format: str = "markdown"
-    batch_multiplier: int = 8         # marker batch multiplier (L4 optimized)
+    batch_multiplier: int = 12        # marker batch multiplier (L4 optimized — higher fills VRAM)
 
     # Explicit surya batch sizes (override auto-detection for L4 GPU)
     # These are set as env vars BEFORE surya imports
@@ -295,19 +296,23 @@ class GPUOptConfig:
 
     # Data loading
     prefetch_workers: int = 4          # threads for async I/O (image load, tokenize)
-    pin_memory: bool = True            # faster host→device transfer
+    pin_memory: bool = True            # faster host→device transfer (DataLoader)
     prefetch_factor: int = 2           # batches to prefetch ahead
 
     # Memory management
     empty_cache_interval: int = 50     # torch.cuda.empty_cache() every N batches
     log_gpu_interval: int = 10         # log VRAM usage every N batches
 
-    # torch.compile (experimental — may not work with all quantized models)
-    use_torch_compile: bool = False
+    # torch.compile for text LLMs (Qwen — ~20-40% inference speedup)
+    use_torch_compile: bool = True     # enable for Qwen2.5 on PyTorch 2.x
+    compile_mode: str = "reduce-overhead"  # "default", "reduce-overhead", "max-autotune"
 
     # torch.backends optimizations for inference
     cudnn_benchmark: bool = True       # auto-tune convolution algorithms
     matmul_precision: str = "medium"   # trade precision for speed (float32 matmul)
+
+    # VLM batching (InternVL2/Vintern models)
+    enable_vlm_batch: bool = True      # attempt batched VLM inference (fallback if fail)
 
 
 # ─────────────────────────────────────────────
@@ -328,6 +333,7 @@ class TQARecord(BaseModel):
 
     qa_id: str = Field(..., description="Unique identifier: <doc>_<chunk>_<bloom>_<seq>")
     domain_tag: str = Field(default="civil_law", description="Subject domain")
+    bloom_level: str = Field(default="", description="Bloom's Taxonomy level: Remember/Understand/Apply")
     context_payload: ContextPayload
     question_content: str
     is_multimodal: bool = Field(

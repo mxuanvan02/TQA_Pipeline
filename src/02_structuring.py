@@ -49,6 +49,7 @@ from src.utils import (
     save_json,
     sync_json_to_drive,
     sync_to_drive,
+    try_torch_compile,
     verify_drive_mount,
 )
 
@@ -295,11 +296,13 @@ def _find_images(text: str, image_dir: Path) -> list[str]:
             if candidate.exists():
                 resolved.append(str(candidate))
 
-    # Also check for any images in the doc-specific image dir
-    if image_dir.exists() and not resolved:
+    # Fallback: check orphan images ONLY if markdown had image refs that didn't resolve
+    if image_dir.exists() and not resolved and refs:
         for img in sorted(image_dir.iterdir()):
             if img.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"):
                 resolved.append(str(img))
+        if resolved:
+            log.debug("  Resolved %d orphan images from %s", len(resolved), image_dir)
 
     return resolved
 
@@ -409,24 +412,28 @@ class VLMDescriber:
         self,
         image_paths: list[str],
         prefetch_workers: int = 4,
+        batch_size: int | None = None,
     ) -> list[dict[str, Any]]:
         """
-        Process multiple images with pipelined prefetching.
+        Process images with TRUE batched GPU inference.
 
-        Who:    VLM with ThreadPool prefetching.
-        How:    Loads next images in background while GPU processes current ones.
+        Who:    VLM with batched generate() + ThreadPool prefetching.
+        How:    Loads images in parallel, feeds them to GPU in batches.
+                Falls back to sequential if batched API is not supported.
         Input:  List of image paths.
         Output: List of description dicts (same order).
 
         GPU Optimization:
+            - True batched generate() for N images simultaneously
             - ThreadPoolExecutor preloads images in parallel
-            - GPU stays busy while I/O happens in background
-            - Falls back to sequential on error
+            - Falls back to sequential on error (e.g., model API mismatch)
         """
         self._load()
 
         if not image_paths:
             return []
+
+        batch_size = batch_size or self.cfg.batch_size
 
         prompt = (
             "Analyze this image from a Vietnamese Civil Law textbook. "
@@ -439,37 +446,73 @@ class VLMDescriber:
 
         is_internvl = "InternVL" in self.cfg.model_name or "Vintern" in self.cfg.model_name
 
-        # Prefetch all images in parallel
+        # Prefetch ALL images in parallel (I/O-bound)
         preloaded = prefetch_batch_io(image_paths, _preload_image, max_workers=prefetch_workers)
 
-        results: list[dict[str, Any]] = []
-        for idx, (img_path, image) in enumerate(zip(image_paths, preloaded)):
-            if image is None:
-                results.append({
-                    "entities": [],
-                    "relationships": [],
-                    "summary": f"[Image at {Path(img_path).name}]",
-                })
+        empty_desc = {"entities": [], "relationships": [], "summary": ""}
+        results: list[dict[str, Any] | None] = [None] * len(image_paths)
+
+        # Process in GPU batches
+        for batch_start in range(0, len(image_paths), batch_size):
+            batch_end = min(batch_start + batch_size, len(image_paths))
+
+            # Separate valid vs failed images
+            valid_pairs: list[tuple[int, Image.Image]] = []
+            for idx in range(batch_start, batch_end):
+                if preloaded[idx] is not None:
+                    valid_pairs.append((idx, preloaded[idx]))
+                else:
+                    results[idx] = {
+                        **empty_desc,
+                        "summary": f"[Image at {Path(image_paths[idx]).name}]",
+                    }
+
+            if not valid_pairs:
                 continue
 
+            valid_indices = [idx for idx, _ in valid_pairs]
+            valid_images = [img for _, img in valid_pairs]
+
+            # Try batched inference (GPU-optimized)
             try:
                 if is_internvl:
-                    desc = self._describe_internvl(image, prompt)
+                    batch_descs = self._describe_internvl_batch(valid_images, prompt)
                 else:
-                    desc = self._describe_qwen_vl(image, prompt)
-                results.append(desc)
+                    batch_descs = self._describe_qwen_vl_batch(valid_images, prompt)
+
+                for i, idx in enumerate(valid_indices):
+                    results[idx] = batch_descs[i]
+
+                log.debug("  Batched VLM: %d images processed", len(valid_images))
+
             except Exception as exc:
-                log.warning("  VLM failed on %s: %s", img_path, exc)
-                results.append({
-                    "entities": [],
-                    "relationships": [],
-                    "summary": f"[Image at {Path(img_path).name}]",
-                })
+                log.warning("  Batched VLM failed (%s), falling back to sequential", exc)
+                for i, idx in enumerate(valid_indices):
+                    try:
+                        if is_internvl:
+                            results[idx] = self._describe_internvl(valid_images[i], prompt)
+                        else:
+                            results[idx] = self._describe_qwen_vl(valid_images[i], prompt)
+                    except Exception as inner_exc:
+                        log.warning("  Sequential VLM failed for %s: %s",
+                                    image_paths[idx], inner_exc)
+                        results[idx] = {
+                            **empty_desc,
+                            "summary": f"[Image at {Path(image_paths[idx]).name}]",
+                        }
+
+        # Fill any remaining None values
+        for i in range(len(results)):
+            if results[i] is None:
+                results[i] = {
+                    **empty_desc,
+                    "summary": f"[Image at {Path(image_paths[i]).name}]",
+                }
 
         return results
 
     def _describe_internvl(self, image: Image.Image, prompt: str) -> dict[str, Any]:
-        """InternVL2-style inference."""
+        """InternVL2-style single-image inference (fallback)."""
         pixel_values = _load_internvl_image(image, self._model)
 
         generation_config = {
@@ -478,17 +521,82 @@ class VLMDescriber:
             "do_sample": self.cfg.temperature > 0,
         }
 
-        response = self._model.chat(
-            self._tokenizer,
-            pixel_values,
-            prompt,
-            generation_config,
-        )
+        with torch.inference_mode():
+            response = self._model.chat(
+                self._tokenizer,
+                pixel_values,
+                prompt,
+                generation_config,
+            )
 
         return _parse_vlm_json(response)
 
+    def _describe_internvl_batch(
+        self, images: list[Image.Image], prompt: str,
+    ) -> list[dict[str, Any]]:
+        """
+        Batched InternVL2/Vintern inference using low-level generate().
+
+        Who:    InternVL2 model with batched pixel_values.
+        How:    Processes N images in ONE GPU call instead of N separate calls.
+        GPU:    N× throughput improvement (e.g., 16 images → 1 generate()).
+        """
+        # Process all images through transform
+        pixel_values_list = []
+        for img in images:
+            pv = _load_internvl_image(img, self._model)
+            if isinstance(pv, torch.Tensor):
+                pixel_values_list.append(pv)
+
+        if not pixel_values_list:
+            return [{"entities": [], "relationships": [], "summary": ""}] * len(images)
+
+        pixel_values = torch.cat(pixel_values_list, dim=0)  # [B, 3, 448, 448]
+
+        # Build conversation with <image> token for each sample
+        conversation = f"<image>\n{prompt}"
+        batch_prompts = [conversation] * len(pixel_values_list)
+
+        # Left-pad for batched causal generation
+        original_side = getattr(self._tokenizer, "padding_side", "right")
+        self._tokenizer.padding_side = "left"
+        if self._tokenizer.pad_token_id is None:
+            self._tokenizer.pad_token = self._tokenizer.eos_token
+
+        inputs = self._tokenizer(
+            batch_prompts, return_tensors="pt", padding=True,
+        ).to(self._model.device)
+
+        input_len = inputs.input_ids.shape[1]
+
+        gen_kwargs = {
+            "max_new_tokens": self.cfg.max_new_tokens,
+            "do_sample": self.cfg.temperature > 0,
+        }
+        if self.cfg.temperature > 0:
+            gen_kwargs["temperature"] = self.cfg.temperature
+
+        with torch.inference_mode():
+            outputs = self._model.generate(
+                pixel_values=pixel_values,
+                input_ids=inputs.input_ids,
+                attention_mask=inputs.attention_mask,
+                **gen_kwargs,
+            )
+
+        self._tokenizer.padding_side = original_side
+
+        results = []
+        for i in range(outputs.shape[0]):
+            resp = self._tokenizer.decode(
+                outputs[i][input_len:], skip_special_tokens=True,
+            )
+            results.append(_parse_vlm_json(resp))
+
+        return results
+
     def _describe_qwen_vl(self, image: Image.Image, prompt: str) -> dict[str, Any]:
-        """Qwen2-VL-style inference."""
+        """Qwen2-VL-style single-image inference (fallback)."""
         from transformers import AutoProcessor
 
         if self._processor is None:
@@ -513,17 +621,70 @@ class VLMDescriber:
             text=[text], images=[image], return_tensors="pt"
         ).to(self._model.device)
 
-        ids = self._model.generate(
-            **inputs,
-            max_new_tokens=self.cfg.max_new_tokens,
-            temperature=self.cfg.temperature,
-            do_sample=self.cfg.temperature > 0,
-        )
+        with torch.inference_mode():
+            ids = self._model.generate(
+                **inputs,
+                max_new_tokens=self.cfg.max_new_tokens,
+                temperature=self.cfg.temperature,
+                do_sample=self.cfg.temperature > 0,
+            )
         output = self._processor.batch_decode(
             ids[:, inputs.input_ids.shape[1]:], skip_special_tokens=True
         )[0]
 
         return _parse_vlm_json(output)
+
+    def _describe_qwen_vl_batch(
+        self, images: list[Image.Image], prompt: str,
+    ) -> list[dict[str, Any]]:
+        """
+        Batched Qwen2-VL inference using processor.
+
+        Who:    Qwen2-VL with batched processor input.
+        How:    Processes N images in ONE GPU call.
+        """
+        from transformers import AutoProcessor
+
+        if self._processor is None:
+            self._processor = AutoProcessor.from_pretrained(
+                self.cfg.model_name, trust_remote_code=True
+            )
+
+        messages_batch = [
+            [{"role": "user", "content": [
+                {"type": "image", "image": img},
+                {"type": "text", "text": prompt},
+            ]}]
+            for img in images
+        ]
+
+        texts = [
+            self._processor.apply_chat_template(
+                msgs, tokenize=False, add_generation_prompt=True,
+            )
+            for msgs in messages_batch
+        ]
+
+        inputs = self._processor(
+            text=texts, images=images, return_tensors="pt", padding=True,
+        ).to(self._model.device)
+
+        input_len = inputs.input_ids.shape[1]
+
+        with torch.inference_mode():
+            outputs = self._model.generate(
+                **inputs,
+                max_new_tokens=self.cfg.max_new_tokens,
+                do_sample=self.cfg.temperature > 0,
+                **({
+                    "temperature": self.cfg.temperature,
+                } if self.cfg.temperature > 0 else {}),
+            )
+
+        decoded = self._processor.batch_decode(
+            outputs[:, input_len:], skip_special_tokens=True,
+        )
+        return [_parse_vlm_json(text) for text in decoded]
 
     def unload(self) -> None:
         """Release GPU memory."""

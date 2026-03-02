@@ -378,6 +378,61 @@ def batched(iterable: list, batch_size: int):
         yield iterable[i : i + batch_size]
 
 
+def batched_by_length(
+    items: list,
+    length_fn,
+    batch_size: int,
+) -> list[tuple[list[int], list]]:
+    """
+    Group items by similar length for minimal padding waste.
+
+    Who:    Stages 3-4 for dynamic batching (GPU optimization).
+    How:    Sorts items by length, batches them, returns (original_indices, items).
+            Within each batch, items have similar lengths → less padding tokens.
+    Input:  List of items + a length function + batch size.
+    Output: List of (original_indices, batch_items) tuples.
+    """
+    indexed = [(i, length_fn(item), item) for i, item in enumerate(items)]
+    indexed.sort(key=lambda x: x[1])
+
+    result = []
+    for batch in batched(indexed, batch_size):
+        original_indices = [x[0] for x in batch]
+        batch_items = [x[2] for x in batch]
+        result.append((original_indices, batch_items))
+    return result
+
+
+def try_torch_compile(model, gpu_cfg=None):
+    """
+    Attempt torch.compile on a model for faster inference.
+
+    Who:    Stages 3-4 (QAGenerator, QAJudge) after model loading.
+    How:    Wraps model with torch.compile if available and enabled.
+            Falls back silently on failure (e.g., unsupported model).
+    Input:  A PyTorch model + optional GPUOptConfig.
+    Output: Compiled model (or original model if compile fails/disabled).
+    """
+    if gpu_cfg is None:
+        return model
+
+    if not getattr(gpu_cfg, "use_torch_compile", False):
+        return model
+
+    try:
+        import torch
+
+        if hasattr(torch, "compile"):
+            mode = getattr(gpu_cfg, "compile_mode", "reduce-overhead")
+            compiled = torch.compile(model, mode=mode)
+            logger.info("  ⚡ torch.compile applied (mode=%s)", mode)
+            return compiled
+    except Exception as e:
+        logger.warning("  ⚠️  torch.compile failed (%s), using eager mode", e)
+
+    return model
+
+
 def log_gpu_memory(label: str = "") -> None:
     """
     Log current GPU VRAM usage for monitoring.

@@ -20,12 +20,13 @@ from __future__ import annotations
 # fill the L4's 22.5 GB VRAM properly.
 # ─────────────────────────────────────────────
 import os
-os.environ.setdefault("RECOGNITION_BATCH_SIZE", "256")  # OCR recognition (bottleneck)
-os.environ.setdefault("DETECTOR_BATCH_SIZE", "64")       # bbox detection
-os.environ.setdefault("LAYOUT_BATCH_SIZE", "64")         # layout analysis
-os.environ.setdefault("ORDER_BATCH_SIZE", "32")          # reading order
-# 🡒 ĐÃ THÊM MỚI: Tăng tốc độ nạp dữ liệu từ CPU lên GPU
-os.environ.setdefault("DATASET_NUM_WORKERS", "4") # Sử dụng 4 luồng I/O
+os.environ.setdefault("RECOGNITION_BATCH_SIZE", "512")  # OCR recognition (bottleneck) — L4 has headroom
+os.environ.setdefault("DETECTOR_BATCH_SIZE", "128")      # bbox detection
+os.environ.setdefault("LAYOUT_BATCH_SIZE", "128")        # layout analysis
+os.environ.setdefault("ORDER_BATCH_SIZE", "64")          # reading order
+os.environ.setdefault("TABLE_REC_BATCH_SIZE", "64")      # table recognition
+os.environ.setdefault("EQUATION_BATCH_SIZE", "64")       # equation detection
+os.environ.setdefault("DATASET_NUM_WORKERS", "4")        # parallel data loading threads
 
 import argparse
 import shutil
@@ -54,9 +55,9 @@ def _apply_torch_optimizations() -> None:
         import torch
         if torch.cuda.is_available():
             torch.backends.cudnn.benchmark = True  # auto-tune conv algorithms
-            # 🡒 ĐÃ THAY ĐỔI: Kích hoạt High precision TF32 cho NVIDIA Ada Lovelace / L4
-            torch.set_float32_matmul_precision("high")
-            # torch.set_float32_matmul_precision("medium")  # speed > precision
+            torch.set_float32_matmul_precision("medium")  # speed > precision (TF32 OK for OCR)
+            # Pre-allocate CUDA memory pool for fewer fragmentation pauses
+            torch.cuda.empty_cache()
             log.info(
                 "⚡ Torch optimizations applied: cudnn.benchmark=True, "
                 "matmul_precision=medium, GPU=%s (%.1f GB free)",
@@ -76,15 +77,16 @@ def digitize_pdf(
     image_dir: Path,
     marker_cfg: MarkerConfig,
     drive_cfg: DriveBackupConfig,
+    model_dict: dict | None = None,
 ) -> Path | None:
     """
     Convert a single PDF to Markdown + extracted images using marker-pdf.
 
     Who:    marker-pdf converter (GPU-accelerated OCR).
     Where:  Outputs to *output_dir* / *image_dir*.
-    How:    Uses marker's Python API (`marker.converters.pdf`) for
-            fine-grained control. Falls back to CLI if API is unavailable.
-    Input:  Single .pdf file path.
+    How:    Uses marker's Python API with a SHARED model_dict to avoid
+            reloading models for every PDF. Falls back to CLI if API is unavailable.
+    Input:  Single .pdf file path + shared model_dict (created once).
     Output: Path to the generated .md file, or None on failure.
     """
     doc_stem = pdf_path.stem
@@ -120,8 +122,8 @@ def digitize_pdf(
     start = time.perf_counter()
 
     try:
-        # ── Attempt 1: marker Python API ──
-        md_text, images = _convert_with_api(pdf_path, marker_cfg)
+        # ── Attempt 1: marker Python API (with shared models) ──
+        md_text, images = _convert_with_api(pdf_path, marker_cfg, model_dict)
 
         # Save markdown
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -163,20 +165,25 @@ def digitize_pdf(
         return None
 
 
-def _convert_with_api(pdf_path: Path, cfg: MarkerConfig) -> tuple[str, dict]:
+def _convert_with_api(
+    pdf_path: Path, cfg: MarkerConfig, model_dict: dict | None = None,
+) -> tuple[str, dict]:
     """
     Internal: invoke marker-pdf Python API.
 
     Who:    marker.converters.pdf.PdfConverter (or equivalent).
-    How:    Instantiates a converter with configuration flags and runs it
-            on the target PDF. Returns (markdown_text, images_dict).
+    How:    Reuses a SHARED model_dict across all PDFs to avoid
+            reloading models (~3 GB, 10-30s) for each PDF.
+    GPU:    Eliminates model reload overhead → massive speedup for multi-PDF batches.
     """
     try:
         from marker.converters.pdf import PdfConverter
         from marker.models import create_model_dict
 
-        # Create model dictionary (marker manages its own model loading)
-        model_dict = create_model_dict()
+        # Reuse shared models or create new ones (fallback)
+        if model_dict is None:
+            log.info("  Creating model dict (no shared models provided)")
+            model_dict = create_model_dict()
 
         converter = PdfConverter(
             artifact_dict=model_dict,
@@ -255,7 +262,8 @@ def run_digitization(
 
     Who:    Orchestration function — loops over PDFs.
     Where:  data/raw/ → data/interim/
-    How:    Calls digitize_pdf() for each discovered PDF.
+    How:    Creates shared model_dict ONCE, then reuses it for all PDFs.
+            This eliminates redundant model reloading (~20s per PDF saved).
     Input:  PathConfig (default: global CFG.paths).
     Output: List of successfully generated .md file paths.
     """
@@ -277,6 +285,33 @@ def run_digitization(
         pdf_files = pdf_files[:limit]
         log.info("🔒 Limited to %d PDF(s)", limit)
 
+    # ── ⚡ Load all marker/surya models ONCE (shared across all PDFs) ──
+    model_dict = None
+    try:
+        from marker.models import create_model_dict
+
+        log.info("⚡ Loading marker models (shared across all PDFs)...")
+        model_load_start = time.perf_counter()
+        model_dict = create_model_dict()
+        model_load_elapsed = time.perf_counter() - model_load_start
+        log.info(
+            "  ✅ Models loaded in %.1fs (will be reused for %d PDFs)",
+            model_load_elapsed, len(pdf_files),
+        )
+
+        # GPU warmup: first inference is always slower (CUDA kernel compilation)
+        log.info("  🔥 GPU warmup...")
+        import torch
+        if torch.cuda.is_available():
+            # Trigger CUDA context initialization
+            _ = torch.zeros(1, device="cuda")
+            torch.cuda.synchronize()
+
+    except ImportError:
+        log.warning("⚠️  marker.models not available — will use CLI fallback")
+    except Exception as exc:
+        log.warning("⚠️  Failed to pre-load models: %s — will load per-PDF", exc)
+
     results: list[Path] = []
     for i, pdf in enumerate(pdf_files, 1):
         log.info("━━━ [%d/%d] ━━━", i, len(pdf_files))
@@ -286,6 +321,7 @@ def run_digitization(
             image_dir=paths.interim_images,
             marker_cfg=marker_cfg,
             drive_cfg=drive_cfg,
+            model_dict=model_dict,  # ⚡ Shared models — no reload!
         )
         if md_path is not None:
             results.append(md_path)
@@ -317,10 +353,11 @@ def main() -> None:
     log.info("🚀 Stage 1 — Multimodal Document Digitization")
     _apply_torch_optimizations()
     log.info(
-        "⚡ Surya batch sizes: RECOGNITION=%s, DETECTOR=%s, LAYOUT=%s",
+        "⚡ Surya batch sizes: RECOGNITION=%s, DETECTOR=%s, LAYOUT=%s, TABLE=%s",
         os.environ.get("RECOGNITION_BATCH_SIZE"),
         os.environ.get("DETECTOR_BATCH_SIZE"),
         os.environ.get("LAYOUT_BATCH_SIZE"),
+        os.environ.get("TABLE_REC_BATCH_SIZE"),
     )
     results = run_digitization(limit=args.limit)
 

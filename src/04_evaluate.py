@@ -54,6 +54,7 @@ from src.utils import (
     setup_tokenizer_for_batch,
     sync_json_to_drive,
     sync_to_drive,
+    try_torch_compile,
     verify_drive_mount,
 )
 
@@ -151,6 +152,9 @@ class QAJudge:
         # Configure tokenizer for batch inference
         setup_tokenizer_for_batch(self._tokenizer)
 
+        # Apply torch.compile for faster inference
+        self._model = try_torch_compile(self._model, CFG.gpu)
+
         elapsed = time.perf_counter() - start
         log.info("  Judge LLM loaded in %.1fs", elapsed)
         log_gpu_memory("QAJudge loaded")
@@ -237,7 +241,7 @@ class QAJudge:
             prompt_len = inputs.input_ids.shape[1]
 
             # Batch generate (deterministic for evaluation)
-            with torch.no_grad():
+            with torch.inference_mode():
                 outputs = self._model.generate(
                     **inputs,
                     max_new_tokens=256,
@@ -255,8 +259,9 @@ class QAJudge:
 
                 scores = _parse_eval_xml(response)
                 if scores:
-                    qa_pairs[valid_idx]["eval_scores"] = scores
-                    results[valid_idx] = qa_pairs[valid_idx]
+                    # Deep copy to avoid mutating input dict
+                    result = {**qa_pairs[valid_idx], "eval_scores": scores}
+                    results[valid_idx] = result
                 else:
                     log.debug("  Could not parse eval for %s",
                               qa_pairs[valid_idx].get("qa_id", "?"))
@@ -286,7 +291,7 @@ class QAJudge:
                     return_tensors="pt",
                 ).to(self._model.device)
 
-                with torch.no_grad():
+                with torch.inference_mode():
                     outputs = self._model.generate(
                         **inputs,
                         max_new_tokens=256,
@@ -302,8 +307,8 @@ class QAJudge:
 
                 scores = _parse_eval_xml(response)
                 if scores:
-                    qa_pairs[valid_idx]["eval_scores"] = scores
-                    results[valid_idx] = qa_pairs[valid_idx]
+                    result = {**qa_pairs[valid_idx], "eval_scores": scores}
+                    results[valid_idx] = result
 
             except Exception as exc:
                 log.warning("  Sequential eval failed for %s: %s",
@@ -427,6 +432,7 @@ def format_to_tqa_records(
             record = TQARecord(
                 qa_id=qa.get("qa_id", ""),
                 domain_tag=qa.get("domain_tag", "civil_law"),
+                bloom_level=qa.get("bloom_level", ""),
                 context_payload=ContextPayload(
                     text=qa.get("context_text", ""),
                     visuals=qa.get("context_visuals", []),
