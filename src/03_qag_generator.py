@@ -446,6 +446,7 @@ def run_qag(
     )
 
     generator = QAGenerator(llm_cfg)
+    generator._load()  # Pre-load LLM + tokenizer (needed by _build_prompt)
     batch_count = 0
     total_batches = (len(new_contexts) + qag_cfg.batch_size - 1) // qag_cfg.batch_size
 
@@ -489,7 +490,6 @@ def run_qag(
             if valid_prompts:
                 try:
                     # ONE batch generate for all contexts × all bloom levels
-                    generator._load()
                     inputs = generator._tokenizer(
                         valid_prompts,
                         return_tensors="pt",

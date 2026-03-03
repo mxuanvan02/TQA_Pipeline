@@ -147,7 +147,7 @@ class QAGConfig:
         "Apply",         # Level 3 — apply to new scenario
     )
     questions_per_level: int = 1      # per chunk, per Bloom level
-    batch_size: int = 16              # contexts per batch (merged bloom: 16×3=48 prompts)
+    batch_size: int = 32              # contexts per batch (merged bloom: 32×3=96 prompts, L4 OK)
     merge_bloom_levels: bool = True   # merge all bloom levels into one GPU call (3× speedup)
 
 
@@ -160,7 +160,7 @@ class EvalConfig:
     legal_fluency_threshold: float = 1.0    # 1 (Pass) or 0 (Fail)
     overall_threshold: float = 1.0          # Must pass all to be included
     score_scale: int = 1                    # Binary indicator
-    batch_size: int = 64                    # QA pairs per eval batch (256-token output → large batch OK)
+    batch_size: int = 128                   # QA pairs per eval batch (256-token output → L4 handles 128+ easily)
 
 
 # ─────────────────────────────────────────────
