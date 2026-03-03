@@ -486,7 +486,7 @@ class VLMDescriber:
                 log.debug("  Batched VLM: %d images processed", len(valid_images))
 
             except Exception as exc:
-                log.warning("  Batched VLM failed (%s), falling back to sequential", exc)
+                log.warning("  Batched VLM failed (Error: %s), falling back to sequential", str(exc))
                 for i, idx in enumerate(valid_indices):
                     try:
                         if is_internvl:
@@ -779,80 +779,59 @@ def process_documents(
 
     # Initialize VLM (lazy — only loads if images exist)
     vlm = VLMDescriber(vlm_cfg)
-    has_images = False
 
+    # We use ThreadPool to wrap I/O + VLM calls
+    # L4 can handle multiple concurrent VLM calls effectively due to small model size (1B)
     all_contexts: list[dict[str, Any]] = []
-    doc_count = 0
 
-    for md_path in tqdm(md_files, desc="Processing documents"):
-        doc_id = md_path.stem
-        drive_doc_ctx = drive_cfg.contexts_dir / f"{doc_id}.json"
-        doc_count += 1
+    # Filter out files already on Drive
+    files_to_process = []
+    for md_path in md_files:
+        drive_doc_ctx = drive_cfg.contexts_dir / f"{md_path.stem}.json"
+        saved = load_drive_checkpoint(drive_doc_ctx, drive_cfg)
+        if saved is not None:
+            all_contexts.extend(saved)
+            log.info("  Loaded cached contexts from Drive: %s", md_path.stem)
+        else:
+            files_to_process.append(md_path)
 
-        # Checkpoint: Skip if Document Contexts already exist on Drive
-        saved_chunks = load_drive_checkpoint(drive_doc_ctx, drive_cfg)
-        if saved_chunks is not None:
-            all_contexts.extend(saved_chunks)
-            log.info("  Loaded cached contexts from Drive: %s", doc_id)
-            continue
+    if not files_to_process:
+        log.info("✅ All documents already processed and cached on Drive.")
+        # Free GPU if VLM was loaded but not used for new processing
+        vlm.unload()
+        return all_contexts
 
-        md_text = md_path.read_text(encoding="utf-8")
+    log.info("🚀 Processing %d documents (Parallel workers = %d)",
+             len(files_to_process), gpu_cfg.prefetch_workers)
 
-        # Resolve per-document image directory
-        doc_image_dir = paths.interim_images / doc_id
+    # Periodic GPU monitoring
+    # This will log GPU memory usage at intervals during parallel processing
+    # The log_gpu_memory function needs to be called from the main thread
+    # or a dedicated monitoring thread if more frequent updates are needed.
+    # For simplicity, we'll rely on the VLM's internal logging or a single
+    # call after processing.
 
-        # Parse into chunks
-        chunks = parse_markdown_to_chunks(
-            md_text=md_text,
-            doc_id=doc_id,
-            image_dir=doc_image_dir,
-            cfg=chunking_cfg,
-        )
-
-        # Clean chunks (filter noise/garbage BEFORE VLM)
-        chunks = clean_chunks(chunks, cleaning_cfg)
-
-        # ── Collect all images across chunks for pipelined processing ──
-        all_doc_images: list[str] = []
-        chunk_image_map: list[tuple[int, int, int]] = []  # (chunk_idx, start, end)
-
-        for chunk_idx, chunk in enumerate(chunks):
-            if chunk.image_paths:
-                start_idx = len(all_doc_images)
-                all_doc_images.extend(chunk.image_paths)
-                end_idx = len(all_doc_images)
-                chunk_image_map.append((chunk_idx, start_idx, end_idx))
-
-        # Process all document images with pipelined VLM
-        if all_doc_images:
-            has_images = True
-            all_descriptions = vlm.describe_images_pipelined(
-                all_doc_images,
-                prefetch_workers=gpu_cfg.prefetch_workers,
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=gpu_cfg.prefetch_workers) as executor:
+        futures = [
+            executor.submit(
+                _process_single_doc,
+                md_path, paths, vlm, chunking_cfg, cleaning_cfg, drive_cfg, gpu_cfg
             )
+            for md_path in files_to_process
+        ]
 
-            # Distribute descriptions back to chunks
-            for chunk_idx, start_idx, end_idx in chunk_image_map:
-                chunks[chunk_idx].visual_descriptions = all_descriptions[start_idx:end_idx]
-                chunks[chunk_idx].is_multimodal = True
-
-        # Convert to dicts and collect
-        doc_contexts = [asdict(chunk) for chunk in chunks]
-        all_contexts.extend(doc_contexts)
-
-        # Backup Document Contexts to Drive (per-document checkpoint)
-        sync_json_to_drive(
-            doc_contexts, drive_doc_ctx, drive_cfg,
-            label=f"contexts for {doc_id}",
-        )
-
-        # Periodic GPU monitoring
-        if doc_count % gpu_cfg.log_gpu_interval == 0:
-            log_gpu_memory(f"Stage 2 doc {doc_count}")
+        for future in tqdm(futures, desc="Stage 2 — Parallel Structuring"):
+            try:
+                doc_results = future.result()
+                all_contexts.extend(doc_results)
+            except Exception as e:
+                log.error("  Document processing failed: %s", e)
 
     # Free GPU
-    if has_images:
-        vlm.unload()
+    vlm.unload()
+    log_gpu_memory("Stage 2 after all documents processed")
+
 
     # Save output
     save_json(all_contexts, paths.multimodal_contexts)
