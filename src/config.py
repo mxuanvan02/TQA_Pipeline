@@ -73,7 +73,7 @@ class PathConfig:
 class VLMConfig:
     """Vision-Language Model settings (Stage 2 — image description)."""
 
-    model_name: str = "5Rii/Vintern-1B-v3"  # Best lightweight VLM for Vietnamese
+    model_name: str = "5CD-AI/Vintern-1B-v3_5"  # Best lightweight VLM for Vietnamese
     # Fallback: "Qwen/Qwen2-VL-2B-Instruct"
     torch_dtype: str = "float16"
     load_in_4bit: bool = True
