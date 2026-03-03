@@ -736,6 +736,63 @@ def _parse_vlm_json(text: str) -> dict[str, Any]:
 # ─────────────────────────────────────────────
 # 3 · Fusion Pipeline (Optimized with Prefetch)
 # ─────────────────────────────────────────────
+def _process_single_doc(
+    md_path: Path,
+    paths: PathConfig,
+    vlm: "VLMDescriber",
+    chunking_cfg: ChunkingConfig,
+    cleaning_cfg: ChunkCleaningConfig,
+    drive_cfg: DriveBackupConfig,
+    gpu_cfg: GPUOptConfig,
+) -> list[dict[str, Any]]:
+    """Process a single Markdown document: chunk → clean → VLM → fuse."""
+    doc_id = md_path.stem
+    image_dir = paths.interim_images / doc_id
+
+    md_text = md_path.read_text(encoding="utf-8")
+
+    # 1. Chunking
+    chunks = parse_markdown_to_chunks(md_text, doc_id, image_dir, chunking_cfg)
+
+    # 2. Cleaning
+    chunks = clean_chunks(chunks, cleaning_cfg)
+
+    # 3. VLM Processing (all images in this document)
+    all_doc_images: list[str] = []
+    chunk_image_map: list[tuple[int, int, int]] = []
+
+    for chunk_idx, chunk in enumerate(chunks):
+        if chunk.image_paths:
+            start_idx = len(all_doc_images)
+            all_doc_images.extend(chunk.image_paths)
+            end_idx = len(all_doc_images)
+            chunk_image_map.append((chunk_idx, start_idx, end_idx))
+
+    if all_doc_images:
+        descriptions = vlm.describe_images_pipelined(
+            all_doc_images,
+            prefetch_workers=gpu_cfg.prefetch_workers,
+            batch_size=vlm.cfg.batch_size if gpu_cfg.enable_vlm_batch else 1,
+        )
+        for chunk_idx, start_idx, end_idx in chunk_image_map:
+            chunks[chunk_idx].visual_descriptions = descriptions[start_idx:end_idx]
+            chunks[chunk_idx].is_multimodal = True
+
+    # 4. Fusion
+    doc_contexts = [asdict(c) for c in chunks]
+
+    # Checkpoint to Drive
+    drive_doc_ctx = drive_cfg.contexts_dir / f"{doc_id}.json"
+    sync_json_to_drive(doc_contexts, drive_doc_ctx, drive_cfg,
+                       label=f"contexts for {doc_id}")
+
+    log.info("  ✅ %s: %d contexts (%d with images)",
+             doc_id, len(doc_contexts),
+             sum(1 for c in chunks if c.is_multimodal))
+
+    return doc_contexts
+
+
 def process_documents(
     paths: PathConfig | None = None,
     vlm_cfg: VLMConfig | None = None,
