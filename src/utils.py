@@ -297,6 +297,38 @@ def sync_json_to_drive(
         return False
 
 
+class AsyncDriveWriter:
+    """
+    Background thread pool for non-blocking Drive I/O.
+    
+    Who:    Stages 3-4 for asynchronous checkpointing.
+    How:    Uses ThreadPoolExecutor to run sync_json_to_drive in the background,
+            preventing the GPU from waiting for slow network/Disk I/O.
+    """
+    def __init__(self, max_workers: int = 2):
+        from concurrent.futures import ThreadPoolExecutor
+        self._executor = ThreadPoolExecutor(max_workers=max_workers)
+        self._futures = []
+    
+    def submit(self, data: Any, drive_path: Path, cfg: DriveBackupConfig | None = None, label: str = "") -> None:
+        """Submit a JSON sync task to the background."""
+        import copy
+        # Deep copy data to avoid mutations while it's waiting to be written
+        data_copy = copy.deepcopy(data)
+        future = self._executor.submit(sync_json_to_drive, data_copy, drive_path, cfg, label)
+        self._futures.append(future)
+    
+    def flush(self) -> None:
+        """Wait for all pending writes to complete."""
+        from concurrent.futures import as_completed
+        for f in as_completed(self._futures):
+            try:
+                f.result()
+            except Exception as e:
+                logger.warning("Async write failed: %s", e)
+        self._futures.clear()
+
+
 def restore_from_drive(
     drive_path: Path,
     local_path: Path,

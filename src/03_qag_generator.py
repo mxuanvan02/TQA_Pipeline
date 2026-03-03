@@ -34,7 +34,9 @@ from tqdm import tqdm
 
 from src.config import CFG, DriveBackupConfig, GPUOptConfig, LLMConfig, PathConfig, QAGConfig
 from src.utils import (
+    AsyncDriveWriter,
     batched,
+    batched_by_length,
     get_logger,
     load_drive_checkpoint,
     load_json,
@@ -106,24 +108,69 @@ Respond with ONLY the XML tags. No explanations before or after.
 # ─────────────────────────────────────────────
 class QAGenerator:
     """
-    Lazy-loaded LLM for generating QA pairs with batch inference.
+    Lazy-loaded LLM for generating QA pairs.
 
-    Who:    Qwen2.5-0.5B-Instruct (4-bit quantized).
-    How:    Loaded once, reused across all chunks. Supports both
-            single-sample and batched generation with left-padding.
+    Primary:  vLLM offline inference engine (PagedAttention, optimal GPU sat).
+    Fallback: HuggingFace generate() with batched evaluation.
     """
 
-    def __init__(self, cfg: LLMConfig) -> None:
+    def __init__(self, cfg: LLMConfig, gpu_cfg: GPUOptConfig | None = None) -> None:
         self.cfg = cfg
+        self.gpu_cfg = gpu_cfg or CFG.gpu
         self._model = None
         self._tokenizer = None
+        self._vllm_engine = None
+        self._vllm_sampling = None
 
     def _load(self) -> None:
         """Lazy-load the LLM on first use."""
-        if self._model is not None:
+        if self._model is not None or self._vllm_engine is not None:
             return
 
-        log.info("Loading LLM: %s (4-bit=%s)", self.cfg.model_name, self.cfg.load_in_4bit)
+        if getattr(self.cfg, "use_vllm", False):
+            try:
+                self._load_vllm()
+                return
+            except Exception as e:
+                log.warning("Failed to load vLLM (%s). Falling back to HuggingFace.", e)
+                self.cfg = type(self.cfg)(**{**self.cfg.__dict__, "use_vllm": False})
+
+        self._load_hf()
+
+    def _load_vllm(self) -> None:
+        """Load the model using vLLM for high-throughput inference."""
+        log.info("Loading LLM via vLLM: %s (4-bit=%s)", self.cfg.model_name, self.cfg.load_in_4bit)
+        start = time.perf_counter()
+
+        from vllm import LLM, SamplingParams
+
+        quantization = "awq" if self.cfg.load_in_4bit else None
+        
+        self._vllm_engine = LLM(
+            model=self.cfg.model_name,
+            quantization=quantization,
+            max_model_len=3072,  # 2048 input + 1024 output
+            gpu_memory_utilization=getattr(self.gpu_cfg, "vllm_gpu_utilization", 0.90),
+            trust_remote_code=True,
+            enforce_eager=False,
+        )
+        
+        # We still need tokenizer for building prompts
+        self._tokenizer = self._vllm_engine.get_tokenizer()
+        
+        self._vllm_sampling = SamplingParams(
+            max_tokens=self.cfg.max_new_tokens,
+            temperature=self.cfg.temperature,
+            top_p=self.cfg.top_p,
+            repetition_penalty=self.cfg.repetition_penalty,
+        )
+
+        elapsed = time.perf_counter() - start
+        log.info("  vLLM engine loaded in %.1fs", elapsed)
+
+    def _load_hf(self) -> None:
+        """Fallback: load via HuggingFace transformers."""
+        log.info("Loading LLM via HF: %s (4-bit=%s)", self.cfg.model_name, self.cfg.load_in_4bit)
         start = time.perf_counter()
 
         from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -152,10 +199,10 @@ class QAGenerator:
         setup_tokenizer_for_batch(self._tokenizer)
 
         # Apply torch.compile for faster inference
-        self._model = try_torch_compile(self._model, CFG.gpu)
+        self._model = try_torch_compile(self._model, self.gpu_cfg)
 
         elapsed = time.perf_counter() - start
-        log.info("  LLM loaded in %.1fs", elapsed)
+        log.info("  HF LLM loaded in %.1fs", elapsed)
         log_gpu_memory("QAGenerator loaded")
 
     def _build_prompt(
@@ -237,40 +284,62 @@ class QAGenerator:
 
         if not valid_prompts:
             return [[] for _ in contexts]
+            
+        if self._vllm_engine is not None:
+            # --- vLLM Engine Path ---
+            try:
+                outputs = self._vllm_engine.generate(valid_prompts, self._vllm_sampling, use_tqdm=False)
+                
+                all_results: list[list[dict[str, Any]]] = [[] for _ in contexts]
+                for batch_idx, valid_idx in enumerate(valid_indices):
+                    response = outputs[batch_idx].outputs[0].text
+                    all_results[valid_idx] = _parse_qa_xml(response)
+                    
+                return all_results
+            except Exception as exc:
+                log.warning("  vLLM generation failed: %s", exc)
+                return [[] for _ in contexts]
 
+        # --- HuggingFace Fallback Path ---
         try:
-            # Batch tokenize with left-padding
-            inputs = self._tokenizer(
-                valid_prompts,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=2048,
-            ).to(self._model.device)
-
-            prompt_len = inputs.input_ids.shape[1]
-
-            # Batch generate
-            with torch.inference_mode():
-                outputs = self._model.generate(
-                    **inputs,
-                    max_new_tokens=self.cfg.max_new_tokens,
-                    temperature=self.cfg.temperature,
-                    top_p=self.cfg.top_p,
-                    do_sample=True,
-                    repetition_penalty=self.cfg.repetition_penalty,
-                    pad_token_id=self._tokenizer.pad_token_id,
-                )
-
-            # Decode each output in the batch
+            # Group by length to reduce padding waste
+            length_fn = lambda x: len(x)
+            batches = batched_by_length(valid_prompts, length_fn, batch_size=16)
+            
             all_results: list[list[dict[str, Any]]] = [[] for _ in contexts]
+            
+            for orig_indices, batch_prompts in batches:
+                # Batch tokenize with left-padding
+                inputs = self._tokenizer(
+                    batch_prompts,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=2048,
+                ).to(self._model.device)
 
-            for batch_idx, valid_idx in enumerate(valid_indices):
-                response = self._tokenizer.decode(
-                    outputs[batch_idx][prompt_len:],
-                    skip_special_tokens=True,
-                )
-                all_results[valid_idx] = _parse_qa_xml(response)
+                prompt_len = inputs.input_ids.shape[1]
+
+                # Batch generate
+                with torch.inference_mode():
+                    outputs = self._model.generate(
+                        **inputs,
+                        max_new_tokens=self.cfg.max_new_tokens,
+                        temperature=self.cfg.temperature,
+                        top_p=self.cfg.top_p,
+                        do_sample=True,
+                        repetition_penalty=self.cfg.repetition_penalty,
+                        pad_token_id=self._tokenizer.pad_token_id,
+                    )
+
+                # Decode each output in the batch
+                for batch_idx, orig_idx in enumerate(orig_indices):
+                    valid_idx = valid_indices[orig_idx]
+                    response = self._tokenizer.decode(
+                        outputs[batch_idx][prompt_len:],
+                        skip_special_tokens=True,
+                    )
+                    all_results[valid_idx] = _parse_qa_xml(response)
 
             return all_results
 
@@ -324,6 +393,14 @@ class QAGenerator:
 
     def unload(self) -> None:
         """Release GPU memory."""
+        if self._vllm_engine is not None:
+            # vLLM occupies memory differently
+            import torch.distributed as dist
+            if dist.is_initialized():
+                dist.destroy_process_group()
+            del self._vllm_engine
+            self._vllm_engine = None
+            
         del self._model, self._tokenizer
         self._model = self._tokenizer = None
         gc.collect()
@@ -445,10 +522,15 @@ def run_qag(
         len(new_contexts), qag_cfg.batch_size, len(contexts) - len(new_contexts),
     )
 
-    generator = QAGenerator(llm_cfg)
+    generator = QAGenerator(llm_cfg, gpu_cfg)
     generator._load()  # Pre-load LLM + tokenizer (needed by _build_prompt)
     batch_count = 0
     total_batches = (len(new_contexts) + qag_cfg.batch_size - 1) // qag_cfg.batch_size
+
+    # Prepare async writer if configured
+    async_writer = None
+    if getattr(gpu_cfg, "async_drive_io", False):
+        async_writer = AsyncDriveWriter(max_workers=2)
 
     # Index for O(1) checkpoint lookups (replaces O(N*K) list scan)
     qa_by_chunk: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -489,59 +571,96 @@ def run_qag(
 
             if valid_prompts:
                 try:
-                    # ONE batch generate for all contexts × all bloom levels
-                    inputs = generator._tokenizer(
-                        valid_prompts,
-                        return_tensors="pt",
-                        padding=True,
-                        truncation=True,
-                        max_length=2048,
-                    ).to(generator._model.device)
+                    if generator._vllm_engine is not None:
+                        # vLLM generation
+                        outputs = generator._vllm_engine.generate(valid_prompts, generator._vllm_sampling, use_tqdm=False)
+                        for out_idx, valid_idx in enumerate(valid_indices):
+                            ctx_idx, bloom_level = prompt_map[valid_idx]
+                            response = outputs[out_idx].outputs[0].text
+                            qa_list = _parse_qa_xml(response)
+                            ctx = batch_contexts[ctx_idx]
+                            chunk_id = ctx.get("chunk_id", "unknown")
+                            doc_id = ctx.get("doc_id", "unknown")
 
-                    prompt_len = inputs.input_ids.shape[1]
+                            for i, qa in enumerate(qa_list):
+                                qa_id = f"{chunk_id}_{bloom_level.lower()}_{i}"
+                                enriched = {
+                                    "qa_id": qa_id,
+                                    "doc_id": doc_id,
+                                    "chunk_id": chunk_id,
+                                    "domain_tag": "civil_law",
+                                    "bloom_level": bloom_level,
+                                    "context_text": ctx.get("text", ""),
+                                    "context_visuals": ctx.get("image_paths", []),
+                                    "visual_descriptions": ctx.get("visual_descriptions", []),
+                                    "is_multimodal": ctx.get("is_multimodal", False),
+                                    "question_content": qa.get("question", ""),
+                                    "candidate_answers": qa.get("candidate_answers", []),
+                                    "ground_truth": qa.get("ground_truth", ""),
+                                    "legal_rationale": qa.get("legal_rationale", ""),
+                                }
+                                all_qa_pairs.append(enriched)
+                                qa_by_chunk[chunk_id].append(enriched)
+                    else:
+                        # HF Generation (with grouping by length)
+                        length_fn = lambda x: len(x)
+                        batches = batched_by_length(valid_prompts, length_fn, batch_size=16)
+                        
+                        for orig_indices, batch_prompts in batches:
+                            inputs = generator._tokenizer(
+                                batch_prompts,
+                                return_tensors="pt",
+                                padding=True,
+                                truncation=True,
+                                max_length=2048,
+                            ).to(generator._model.device)
 
-                    with torch.inference_mode():
-                        outputs = generator._model.generate(
-                            **inputs,
-                            max_new_tokens=llm_cfg.max_new_tokens,
-                            temperature=llm_cfg.temperature,
-                            top_p=llm_cfg.top_p,
-                            do_sample=True,
-                            repetition_penalty=llm_cfg.repetition_penalty,
-                            pad_token_id=generator._tokenizer.pad_token_id,
-                        )
+                            prompt_len = inputs.input_ids.shape[1]
 
-                    # Parse outputs and distribute to contexts × bloom levels
-                    for out_idx, valid_idx in enumerate(valid_indices):
-                        ctx_idx, bloom_level = prompt_map[valid_idx]
-                        response = generator._tokenizer.decode(
-                            outputs[out_idx][prompt_len:],
-                            skip_special_tokens=True,
-                        )
-                        qa_list = _parse_qa_xml(response)
-                        ctx = batch_contexts[ctx_idx]
-                        chunk_id = ctx.get("chunk_id", "unknown")
-                        doc_id = ctx.get("doc_id", "unknown")
+                            with torch.inference_mode():
+                                outputs = generator._model.generate(
+                                    **inputs,
+                                    max_new_tokens=llm_cfg.max_new_tokens,
+                                    temperature=llm_cfg.temperature,
+                                    top_p=llm_cfg.top_p,
+                                    do_sample=True,
+                                    repetition_penalty=llm_cfg.repetition_penalty,
+                                    pad_token_id=generator._tokenizer.pad_token_id,
+                                )
 
-                        for i, qa in enumerate(qa_list):
-                            qa_id = f"{chunk_id}_{bloom_level.lower()}_{i}"
-                            enriched = {
-                                "qa_id": qa_id,
-                                "doc_id": doc_id,
-                                "chunk_id": chunk_id,
-                                "domain_tag": "civil_law",
-                                "bloom_level": bloom_level,
-                                "context_text": ctx.get("text", ""),
-                                "context_visuals": ctx.get("image_paths", []),
-                                "visual_descriptions": ctx.get("visual_descriptions", []),
-                                "is_multimodal": ctx.get("is_multimodal", False),
-                                "question_content": qa.get("question", ""),
-                                "candidate_answers": qa.get("candidate_answers", []),
-                                "ground_truth": qa.get("ground_truth", ""),
-                                "legal_rationale": qa.get("legal_rationale", ""),
-                            }
-                            all_qa_pairs.append(enriched)
-                            qa_by_chunk[chunk_id].append(enriched)
+                            # Decode
+                            for batch_idx, orig_idx in enumerate(orig_indices):
+                                valid_idx = valid_indices[orig_idx]
+                                ctx_idx, bloom_level = prompt_map[valid_idx]
+                                
+                                response = generator._tokenizer.decode(
+                                    outputs[batch_idx][prompt_len:],
+                                    skip_special_tokens=True,
+                                )
+                                qa_list = _parse_qa_xml(response)
+                                ctx = batch_contexts[ctx_idx]
+                                chunk_id = ctx.get("chunk_id", "unknown")
+                                doc_id = ctx.get("doc_id", "unknown")
+
+                                for i, qa in enumerate(qa_list):
+                                    qa_id = f"{chunk_id}_{bloom_level.lower()}_{i}"
+                                    enriched = {
+                                        "qa_id": qa_id,
+                                        "doc_id": doc_id,
+                                        "chunk_id": chunk_id,
+                                        "domain_tag": "civil_law",
+                                        "bloom_level": bloom_level,
+                                        "context_text": ctx.get("text", ""),
+                                        "context_visuals": ctx.get("image_paths", []),
+                                        "visual_descriptions": ctx.get("visual_descriptions", []),
+                                        "is_multimodal": ctx.get("is_multimodal", False),
+                                        "question_content": qa.get("question", ""),
+                                        "candidate_answers": qa.get("candidate_answers", []),
+                                        "ground_truth": qa.get("ground_truth", ""),
+                                        "legal_rationale": qa.get("legal_rationale", ""),
+                                    }
+                                    all_qa_pairs.append(enriched)
+                                    qa_by_chunk[chunk_id].append(enriched)
 
                 except Exception as exc:
                     log.warning("  Merged bloom batch failed: %s, falling back to per-level", exc)
@@ -607,16 +726,26 @@ def run_qag(
             chunk_qa = qa_by_chunk.get(chunk_id, [])
             if chunk_qa:
                 drive_chunk_qa = drive_cfg.qa_chunks_dir / f"{chunk_id}.json"
-                sync_json_to_drive(
-                    chunk_qa, drive_chunk_qa, drive_cfg,
-                    label=f"QA pairs for {chunk_id}",
-                )
+                if async_writer:
+                    async_writer.submit(
+                        chunk_qa, drive_chunk_qa, drive_cfg,
+                        label=f"QA pairs for {chunk_id}",
+                    )
+                else:
+                    sync_json_to_drive(
+                        chunk_qa, drive_chunk_qa, drive_cfg,
+                        label=f"QA pairs for {chunk_id}",
+                    )
 
         # Periodic VRAM cleanup
         if batch_count % gpu_cfg.empty_cache_interval == 0:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
+    # Wait for pending checkpoints
+    if async_writer:
+        async_writer.flush()
+        
     # Free GPU
     generator.unload()
 

@@ -87,11 +87,12 @@ class VLMConfig:
 class LLMConfig:
     """Text-only LLM settings (Stage 3 — QAG, Stage 4 — Evaluation)."""
 
-    model_name: str = "Qwen/Qwen2.5-0.5B-Instruct"  # Lightest instruction-tuned LLM
-    # Fallback: "Qwen/Qwen2.5-1.5B-Instruct"
+    model_name: str = "Qwen/Qwen2.5-3B-Instruct"  # Larger model for better logic & GPU sat
+    # Fallback: "Qwen/Qwen2.5-0.5B-Instruct" or "Qwen/Qwen2.5-1.5B-Instruct"
     torch_dtype: str = "bfloat16"
     load_in_4bit: bool = True
-    max_new_tokens: int = 1024
+    use_vllm: bool = True             # Primary offline inference engine
+    max_new_tokens: int = 512         # Reduced from 1024 for faster generation
     temperature: float = 0.7          # for creative QA generation
     eval_temperature: float = 0.1     # deterministic evaluation
     top_p: float = 0.9
@@ -147,7 +148,7 @@ class QAGConfig:
         "Apply",         # Level 3 — apply to new scenario
     )
     questions_per_level: int = 1      # per chunk, per Bloom level
-    batch_size: int = 32              # contexts per batch (merged bloom: 32×3=96 prompts, L4 OK)
+    batch_size: int = 64              # HF fallback only (vLLM processes all prompts at once)
     merge_bloom_levels: bool = True   # merge all bloom levels into one GPU call (3× speedup)
 
 
@@ -318,6 +319,10 @@ class GPUOptConfig:
 
     # VLM batching (InternVL2/Vintern models)
     enable_vlm_batch: bool = True      # attempt batched VLM inference (fallback if fail)
+
+    # vLLM optimization
+    vllm_gpu_utilization: float = 0.90 # % VRAM reserved for vLLM KV cache
+    async_drive_io: bool = True        # run checkpointing in background threads
 
 
 # ─────────────────────────────────────────────

@@ -44,7 +44,9 @@ from src.config import (
     TQARecord,
 )
 from src.utils import (
+    AsyncDriveWriter,
     batched,
+    batched_by_length,
     get_logger,
     load_drive_checkpoint,
     load_json,
@@ -109,22 +111,66 @@ class QAJudge:
     """
     LLM-as-a-judge for QA pair quality evaluation.
 
-    Who:    Qwen2.5-0.5B-Instruct (4-bit, deterministic temperature).
-    How:    Scores each QA pair on 3 criteria, supports batch inference.
+    Primary:  vLLM offline inference engine (PagedAttention, optimal GPU sat).
+    Fallback: HuggingFace generate() with batched evaluation.
     """
 
-    def __init__(self, cfg: LLMConfig, eval_cfg: EvalConfig) -> None:
+    def __init__(self, cfg: LLMConfig, eval_cfg: EvalConfig, gpu_cfg: GPUOptConfig | None = None) -> None:
         self.cfg = cfg
         self.eval_cfg = eval_cfg
+        self.gpu_cfg = gpu_cfg or CFG.gpu
         self._model = None
         self._tokenizer = None
+        self._vllm_engine = None
+        self._vllm_sampling = None
 
     def _load(self) -> None:
-        """Lazy-load the LLM."""
-        if self._model is not None:
+        """Lazy-load the LLM on first use."""
+        if self._model is not None or self._vllm_engine is not None:
             return
 
-        log.info("Loading Judge LLM: %s", self.cfg.model_name)
+        if getattr(self.cfg, "use_vllm", False):
+            try:
+                self._load_vllm()
+                return
+            except Exception as e:
+                log.warning("Failed to load vLLM (%s). Falling back to HuggingFace.", e)
+                self.cfg = type(self.cfg)(**{**self.cfg.__dict__, "use_vllm": False})
+
+        self._load_hf()
+
+    def _load_vllm(self) -> None:
+        """Load the model using vLLM for high-throughput inference."""
+        log.info("Loading Judge LLM via vLLM: %s (4-bit=%s)", self.cfg.model_name, self.cfg.load_in_4bit)
+        start = time.perf_counter()
+
+        from vllm import LLM, SamplingParams
+
+        quantization = "awq" if self.cfg.load_in_4bit else None
+        
+        self._vllm_engine = LLM(
+            model=self.cfg.model_name,
+            quantization=quantization,
+            max_model_len=3072,
+            gpu_memory_utilization=getattr(self.gpu_cfg, "vllm_gpu_utilization", 0.90),
+            trust_remote_code=True,
+            enforce_eager=False,
+        )
+        
+        self._tokenizer = self._vllm_engine.get_tokenizer()
+        
+        self._vllm_sampling = SamplingParams(
+            max_tokens=256,
+            temperature=self.cfg.eval_temperature,
+            top_p=1.0,
+        )
+
+        elapsed = time.perf_counter() - start
+        log.info("  vLLM engine loaded in %.1fs", elapsed)
+
+    def _load_hf(self) -> None:
+        """Fallback: load via HuggingFace transformers."""
+        log.info("Loading Judge LLM via HF: %s", self.cfg.model_name)
         start = time.perf_counter()
 
         from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -153,10 +199,10 @@ class QAJudge:
         setup_tokenizer_for_batch(self._tokenizer)
 
         # Apply torch.compile for faster inference
-        self._model = try_torch_compile(self._model, CFG.gpu)
+        self._model = try_torch_compile(self._model, self.gpu_cfg)
 
         elapsed = time.perf_counter() - start
-        log.info("  Judge LLM loaded in %.1fs", elapsed)
+        log.info("  HF Judge LLM loaded in %.1fs", elapsed)
         log_gpu_memory("QAJudge loaded")
 
     def _build_prompt(self, qa: dict[str, Any]) -> str:
@@ -227,44 +273,67 @@ class QAJudge:
 
         if not valid_prompts:
             return results
+            
+        if self._vllm_engine is not None:
+            # --- vLLM Engine Path ---
+            try:
+                outputs = self._vllm_engine.generate(valid_prompts, self._vllm_sampling, use_tqdm=False)
+                for batch_idx, valid_idx in enumerate(valid_indices):
+                    response = outputs[batch_idx].outputs[0].text
+                    scores = _parse_eval_xml(response)
+                    if scores:
+                        result = {**qa_pairs[valid_idx], "eval_scores": scores}
+                        results[valid_idx] = result
+                    else:
+                        log.debug("  Could not parse eval for %s", qa_pairs[valid_idx].get("qa_id", "?"))
+                return results
+            except Exception as exc:
+                log.warning("  vLLM evaluation failed: %s", exc)
+                return results
 
+        # --- HuggingFace Fallback Path ---
         try:
-            # Batch tokenize with left-padding
-            inputs = self._tokenizer(
-                valid_prompts,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=2048,
-            ).to(self._model.device)
+            # Group by length
+            length_fn = lambda x: len(x)
+            batches = batched_by_length(valid_prompts, length_fn, batch_size=32)
+            
+            for orig_indices, batch_prompts in batches:
+                # Batch tokenize with left-padding
+                inputs = self._tokenizer(
+                    batch_prompts,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=2048,
+                ).to(self._model.device)
 
-            prompt_len = inputs.input_ids.shape[1]
+                prompt_len = inputs.input_ids.shape[1]
 
-            # Batch generate (deterministic for evaluation)
-            with torch.inference_mode():
-                outputs = self._model.generate(
-                    **inputs,
-                    max_new_tokens=256,
-                    temperature=self.cfg.eval_temperature,
-                    do_sample=False,
-                    pad_token_id=self._tokenizer.pad_token_id,
-                )
+                # Batch generate (deterministic for evaluation)
+                with torch.inference_mode():
+                    outputs = self._model.generate(
+                        **inputs,
+                        max_new_tokens=256,
+                        temperature=self.cfg.eval_temperature,
+                        do_sample=False,
+                        pad_token_id=self._tokenizer.pad_token_id,
+                    )
 
-            # Decode and parse each output
-            for batch_idx, valid_idx in enumerate(valid_indices):
-                response = self._tokenizer.decode(
-                    outputs[batch_idx][prompt_len:],
-                    skip_special_tokens=True,
-                )
+                # Decode and parse each output
+                for batch_idx, orig_idx in enumerate(orig_indices):
+                    valid_idx = valid_indices[orig_idx]
+                    response = self._tokenizer.decode(
+                        outputs[batch_idx][prompt_len:],
+                        skip_special_tokens=True,
+                    )
 
-                scores = _parse_eval_xml(response)
-                if scores:
-                    # Deep copy to avoid mutating input dict
-                    result = {**qa_pairs[valid_idx], "eval_scores": scores}
-                    results[valid_idx] = result
-                else:
-                    log.debug("  Could not parse eval for %s",
-                              qa_pairs[valid_idx].get("qa_id", "?"))
+                    scores = _parse_eval_xml(response)
+                    if scores:
+                        result = {**qa_pairs[valid_idx], "eval_scores": scores}
+                        results[valid_idx] = result
+                    else:
+                        log.debug("  Could not parse eval for %s",
+                                  qa_pairs[valid_idx].get("qa_id", "?"))
 
             return results
 
@@ -318,6 +387,13 @@ class QAJudge:
 
     def unload(self) -> None:
         """Release GPU memory."""
+        if self._vllm_engine is not None:
+            import torch.distributed as dist
+            if dist.is_initialized():
+                dist.destroy_process_group()
+            del self._vllm_engine
+            self._vllm_engine = None
+			
         del self._model, self._tokenizer
         self._model = self._tokenizer = None
         gc.collect()
@@ -514,8 +590,14 @@ def run_evaluation(
             len(new_pairs), eval_cfg.batch_size, len(raw_pairs) - len(new_pairs),
         )
 
+        # Prepare async writer if configured
+        async_writer = None
+        if getattr(gpu_cfg, "async_drive_io", False):
+            async_writer = AsyncDriveWriter(max_workers=2)
+
         # ── Stage 4: Batched Evaluate ──
-        judge = QAJudge(llm_cfg, eval_cfg)
+        judge = QAJudge(llm_cfg, eval_cfg, gpu_cfg)
+        judge._load()
         batch_count = 0
         total_batches = (len(new_pairs) + eval_cfg.batch_size - 1) // eval_cfg.batch_size
 
@@ -541,13 +623,19 @@ def run_evaluation(
                     # Per-QA Drive checkpoint
                     qa_id = qa_result.get("qa_id", "unknown")
                     drive_qa_eval = drive_cfg.evaluated_qa_dir / f"{qa_id}.json"
-                    sync_json_to_drive(qa_result, drive_qa_eval, drive_cfg)
+                    if async_writer:
+                        async_writer.submit(qa_result, drive_qa_eval, drive_cfg)
+                    else:
+                        sync_json_to_drive(qa_result, drive_qa_eval, drive_cfg)
 
             # Periodic VRAM cleanup
             if batch_count % gpu_cfg.empty_cache_interval == 0:
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
+        if async_writer:
+            async_writer.flush()
+            
         judge.unload()
 
     log.info("  Successfully evaluated %d / %d pairs", len(evaluated), len(raw_pairs))
