@@ -151,6 +151,7 @@ class QAGenerator:
             quantization=quantization,
             max_model_len=3072,  # 2048 input + 1024 output
             gpu_memory_utilization=getattr(self.gpu_cfg, "vllm_gpu_utilization", 0.90),
+            max_num_seqs=getattr(self.gpu_cfg, "vllm_max_num_seqs", 1024),
             trust_remote_code=True,
             enforce_eager=False,
         )

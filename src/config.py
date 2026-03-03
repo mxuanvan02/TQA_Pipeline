@@ -147,7 +147,7 @@ class QAGConfig:
         "Apply",         # Level 3 — apply to new scenario
     )
     questions_per_level: int = 1      # per chunk, per Bloom level
-    batch_size: int = 64              # HF fallback only (vLLM processes all prompts at once)
+    batch_size: int = 256             # Large batch to feed vLLM continuous batching scheduler
     merge_bloom_levels: bool = True   # merge all bloom levels into one GPU call (3× speedup)
 
 
@@ -160,7 +160,7 @@ class EvalConfig:
     legal_fluency_threshold: float = 1.0    # 1 (Pass) or 0 (Fail)
     overall_threshold: float = 1.0          # Must pass all to be included
     score_scale: int = 1                    # Binary indicator
-    batch_size: int = 128                   # QA pairs per eval batch (256-token output → L4 handles 128+ easily)
+    batch_size: int = 512                   # Massive batch size for tiny output (256-token)
 
 
 # ─────────────────────────────────────────────
@@ -321,6 +321,7 @@ class GPUOptConfig:
 
     # vLLM optimization
     vllm_gpu_utilization: float = 0.90 # % VRAM reserved for vLLM KV cache
+    vllm_max_num_seqs: int = 1024      # Max concurrent sequences (pushes GPU scheduler to 100%)
     async_drive_io: bool = True        # run checkpointing in background threads
 
 
