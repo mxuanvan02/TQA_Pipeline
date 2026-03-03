@@ -87,8 +87,7 @@ class VLMConfig:
 class LLMConfig:
     """Text-only LLM settings (Stage 3 — QAG, Stage 4 — Evaluation)."""
 
-    model_name: str = "Qwen/Qwen2.5-3B-Instruct"  # Larger model for better logic & GPU sat
-    # Fallback: "Qwen/Qwen2.5-0.5B-Instruct" or "Qwen/Qwen2.5-1.5B-Instruct"
+    model_name: str = "Qwen/Qwen2.5-0.5B-Instruct"  # Fallback: "Qwen/Qwen2.5-1.5B-Instruct" or "Qwen/Qwen2.5-3B-Instruct"
     torch_dtype: str = "bfloat16"
     load_in_4bit: bool = True
     use_vllm: bool = True             # Primary offline inference engine
