@@ -109,9 +109,9 @@ class ChunkingConfig:
     split_headers: tuple[str, ...] = ("#", "##", "###")
     # Tách chunk theo cấu trúc văn bản pháp luật VN bổ sung nếu marker không nhận diện #
     legal_split_patterns: tuple[str, ...] = (
-        r"^(?i)(?:Điều|Khoản)\s+\d+(?:[\.\:])?\s*",
-        r"^(?i)Chương\s+[IVXLCDM]+(?:[\.\:])?\s*",
-        r"^(?i)Mục\s+\d+(?:[\.\:])?\s*",
+        r"^(?:Điều|Khoản)\s+\d+(?:[\.\:])?\s*",
+        r"^Chương\s+[IVXLCDM]+(?:[\.\:])?\s*",
+        r"^Mục\s+\d+(?:[\.\:])?\s*",
     )
     min_chunk_chars: int = 100        # skip trivially short chunks
     max_chunk_chars: int = 3000       # hard ceiling per context window

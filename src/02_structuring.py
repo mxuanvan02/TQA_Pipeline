@@ -91,7 +91,7 @@ def _build_splitter_regex(cfg: ChunkingConfig) -> re.Pattern[str]:
         parts.append(f"({p})([\\s\\S]*?)$")
 
     pattern_str = "|".join(parts)
-    return re.compile(pattern_str, re.MULTILINE)
+    return re.compile(pattern_str, re.MULTILINE | re.IGNORECASE)
 
 
 def parse_markdown_to_chunks(
