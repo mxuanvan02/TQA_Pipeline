@@ -3,9 +3,24 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Data (Crucial: do not push raw/interim/processed data)
-data/
+# Data policy:
+# - Keep only dataset artifacts (processed) in git.
+# - Never push raw inputs.
+data/*
+!data/output/
+data/output/*
+!data/output/processed/
+!data/output/processed/**
+data/raw/
+data/output/raw/
+data/output/interim/
 TQA_Pipeline/data/
+
+# Paper/research writing artifacts (exclude from git)
+research/
+*.tex
+*.md
+*.docx
 
 # Environments
 .env
