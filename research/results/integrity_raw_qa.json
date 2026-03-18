@@ -1,0 +1,16 @@
+{
+  "dataset_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/raw_qa_pairs.json",
+  "n_records": 0,
+  "record_checks": {
+    "missing_required_fields": 0,
+    "empty_question": 0,
+    "invalid_candidate_answers": 0,
+    "duplicate_qa_id": 0,
+    "duplicate_question_ground_truth": 0
+  },
+  "split_leakage": {
+    "checked": true,
+    "leaky_doc_count": 0,
+    "details": {}
+  }
+}

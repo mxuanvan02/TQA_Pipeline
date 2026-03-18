@@ -539,6 +539,9 @@ def run_evaluation(
     drive_cfg: DriveBackupConfig | None = None,
     gpu_cfg: GPUOptConfig | None = None,
     limit: int | None = None,
+    no_filter: bool = False,
+    skip_judge: bool = False,
+    allow_same_model: bool = False,
 ) -> list[TQARecord]:
     """
     End-to-end Stage 4 + 5: evaluate, filter, format (BATCHED).
@@ -562,6 +565,14 @@ def run_evaluation(
 
     # Pre-flight: verify Drive mount
     verify_drive_mount(drive_cfg)
+    if skip_judge and not no_filter:
+        log.warning("--skip-judge implies --no-filter; enabling no_filter automatically.")
+        no_filter = True
+    if not skip_judge and not allow_same_model and llm_cfg.model_name == CFG.llm.model_name:
+        raise RuntimeError(
+            "Judge model matches generator model. Set a different judge model "
+            "(e.g., --model-name ...) or pass --allow-same-model to override."
+        )
 
     # Load raw QA pairs
     raw_pairs = load_json(paths.raw_qa_pairs)
@@ -573,76 +584,83 @@ def run_evaluation(
     new_pairs = []
     evaluated: list[dict[str, Any]] = []
 
-    for qa in raw_pairs:
-        qa_id = qa.get("qa_id", "unknown")
-        drive_qa_eval = drive_cfg.evaluated_qa_dir / f"{qa_id}.json"
-
-        saved_eval = load_drive_checkpoint(drive_qa_eval, drive_cfg)
-        if saved_eval is not None:
-            evaluated.append(saved_eval)
-        else:
-            new_pairs.append(qa)
-
-    if not new_pairs:
-        log.info("All %d QA pairs already evaluated (loaded from Drive cache)", len(raw_pairs))
+    if skip_judge:
+        log.info("Skipping judge evaluation (--skip-judge). Using raw QA pairs directly.")
+        evaluated = raw_pairs
     else:
-        log.info(
-            "Evaluating %d new QA pairs (batch_size=%d), %d cached",
-            len(new_pairs), eval_cfg.batch_size, len(raw_pairs) - len(new_pairs),
-        )
+        for qa in raw_pairs:
+            qa_id = qa.get("qa_id", "unknown")
+            drive_qa_eval = drive_cfg.evaluated_qa_dir / f"{qa_id}.json"
 
-        # Prepare async writer if configured
-        async_writer = None
-        if getattr(gpu_cfg, "async_drive_io", False):
-            async_writer = AsyncDriveWriter(max_workers=2)
+            saved_eval = load_drive_checkpoint(drive_qa_eval, drive_cfg)
+            if saved_eval is not None:
+                evaluated.append(saved_eval)
+            else:
+                new_pairs.append(qa)
 
-        # ── Stage 4: Batched Evaluate ──
-        judge = QAJudge(llm_cfg, eval_cfg, gpu_cfg)
-        judge._load()
-        batch_count = 0
-        total_batches = (len(new_pairs) + eval_cfg.batch_size - 1) // eval_cfg.batch_size
+    if not skip_judge:
+        if not new_pairs:
+            log.info("All %d QA pairs already evaluated (loaded from Drive cache)", len(raw_pairs))
+        else:
+            log.info(
+                "Evaluating %d new QA pairs (batch_size=%d), %d cached",
+                len(new_pairs), eval_cfg.batch_size, len(raw_pairs) - len(new_pairs),
+            )
 
-        for batch_qa in tqdm(
-            batched(new_pairs, eval_cfg.batch_size),
-            total=total_batches,
-            desc="Eval Batches",
-        ):
-            batch_count += 1
+            # Prepare async writer if configured
+            async_writer = None
+            if getattr(gpu_cfg, "async_drive_io", False):
+                async_writer = AsyncDriveWriter(max_workers=2)
 
-            # Log GPU usage periodically
-            if batch_count % gpu_cfg.log_gpu_interval == 0:
-                log_gpu_memory(f"Eval batch {batch_count}/{total_batches}")
+            # ── Stage 4: Batched Evaluate ──
+            judge = QAJudge(llm_cfg, eval_cfg, gpu_cfg)
+            judge._load()
+            batch_count = 0
+            total_batches = (len(new_pairs) + eval_cfg.batch_size - 1) // eval_cfg.batch_size
 
-            # Batch evaluate
-            batch_results = judge.evaluate_batch(batch_qa)
+            for batch_qa in tqdm(
+                batched(new_pairs, eval_cfg.batch_size),
+                total=total_batches,
+                desc="Eval Batches",
+            ):
+                batch_count += 1
 
-            # Collect results & checkpoint to Drive
-            for qa_result in batch_results:
-                if qa_result is not None:
-                    evaluated.append(qa_result)
+                # Log GPU usage periodically
+                if batch_count % gpu_cfg.log_gpu_interval == 0:
+                    log_gpu_memory(f"Eval batch {batch_count}/{total_batches}")
 
-                    # Per-QA Drive checkpoint
-                    qa_id = qa_result.get("qa_id", "unknown")
-                    drive_qa_eval = drive_cfg.evaluated_qa_dir / f"{qa_id}.json"
-                    if async_writer:
-                        async_writer.submit(qa_result, drive_qa_eval, drive_cfg)
-                    else:
-                        sync_json_to_drive(qa_result, drive_qa_eval, drive_cfg)
+                # Batch evaluate
+                batch_results = judge.evaluate_batch(batch_qa)
 
-            # Periodic VRAM cleanup
-            if batch_count % gpu_cfg.empty_cache_interval == 0:
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                # Collect results & checkpoint to Drive
+                for qa_result in batch_results:
+                    if qa_result is not None:
+                        evaluated.append(qa_result)
 
-        if async_writer:
-            async_writer.flush()
-            
-        judge.unload()
+                        # Per-QA Drive checkpoint
+                        qa_id = qa_result.get("qa_id", "unknown")
+                        drive_qa_eval = drive_cfg.evaluated_qa_dir / f"{qa_id}.json"
+                        if async_writer:
+                            async_writer.submit(qa_result, drive_qa_eval, drive_cfg)
+                        else:
+                            sync_json_to_drive(qa_result, drive_qa_eval, drive_cfg)
 
-    log.info("  Successfully evaluated %d / %d pairs", len(evaluated), len(raw_pairs))
+                # Periodic VRAM cleanup
+                if batch_count % gpu_cfg.empty_cache_interval == 0:
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+
+            if async_writer:
+                async_writer.flush()
+
+            judge.unload()
+
+        log.info("  Successfully evaluated %d / %d pairs", len(evaluated), len(raw_pairs))
 
     # Filter below-threshold samples
-    filtered = filter_qa_pairs(evaluated, eval_cfg)
+    filtered = evaluated if no_filter else filter_qa_pairs(evaluated, eval_cfg)
+    if no_filter:
+        log.info("Skipping filter (--no-filter). Keeping all %d records.", len(filtered))
 
     # Save filtered pairs (intermediate artifact)
     save_json(filtered, paths.filtered_qa_pairs)
@@ -688,16 +706,68 @@ def main() -> None:
         "--batch-size", type=int, default=None,
         help="Override eval batch size (default: from config)",
     )
+    parser.add_argument(
+        "--model-name",
+        type=str,
+        default=None,
+        help="Override judge model name (for cross-judge experiments)",
+    )
+    parser.add_argument(
+        "--no-filter",
+        action="store_true",
+        help="Ablation/baseline: skip threshold filtering",
+    )
+    parser.add_argument(
+        "--skip-judge",
+        action="store_true",
+        help="Baseline: skip judge evaluation and format raw QA directly",
+    )
+    parser.add_argument(
+        "--disable-multimodal-alignment",
+        action="store_true",
+        help="Ablation: disable multimodal alignment criterion in filtering",
+    )
+    parser.add_argument(
+        "--allow-same-model",
+        action="store_true",
+        help="Allow using the same model for generation and judge (not recommended).",
+    )
+    parser.add_argument("--groundedness-threshold", type=float, default=None)
+    parser.add_argument("--multimodal-threshold", type=float, default=None)
+    parser.add_argument("--legal-fluency-threshold", type=float, default=None)
+    parser.add_argument("--overall-threshold", type=float, default=None)
     args = parser.parse_args()
 
     log.info("Stage 4 -- Evaluation (LLM-as-a-Judge, Batched)")
 
+    from dataclasses import replace
+
+    llm_cfg = replace(CFG.llm, model_name=CFG.evaluation.judge_model_name)
+    eval_cfg = CFG.evaluation
+
+    if args.model_name:
+        llm_cfg = replace(llm_cfg, model_name=args.model_name)
     if args.batch_size:
-        from dataclasses import replace
-        eval_cfg = replace(CFG.evaluation, batch_size=args.batch_size)
-        results = run_evaluation(limit=args.limit, eval_cfg=eval_cfg)
-    else:
-        results = run_evaluation(limit=args.limit)
+        eval_cfg = replace(eval_cfg, batch_size=args.batch_size)
+    if args.disable_multimodal_alignment:
+        eval_cfg = replace(eval_cfg, multimodal_alignment_threshold=0.0)
+    if args.groundedness_threshold is not None:
+        eval_cfg = replace(eval_cfg, groundedness_threshold=args.groundedness_threshold)
+    if args.multimodal_threshold is not None:
+        eval_cfg = replace(eval_cfg, multimodal_alignment_threshold=args.multimodal_threshold)
+    if args.legal_fluency_threshold is not None:
+        eval_cfg = replace(eval_cfg, legal_fluency_threshold=args.legal_fluency_threshold)
+    if args.overall_threshold is not None:
+        eval_cfg = replace(eval_cfg, overall_threshold=args.overall_threshold)
+
+    results = run_evaluation(
+        limit=args.limit,
+        llm_cfg=llm_cfg,
+        eval_cfg=eval_cfg,
+        no_filter=args.no_filter,
+        skip_judge=args.skip_judge,
+        allow_same_model=args.allow_same_model,
+    )
 
     if not results:
         log.warning("No records survived evaluation. Check thresholds or raw QA quality.")

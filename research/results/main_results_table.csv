@@ -1,0 +1,2 @@
+system,n_records,parse_valid_rate,duplicate_rate,diversity_ratio,multimodal_ratio,qa_source
+Primary(current),120,1.0,0.0,0.8833333333333333,0.0,qa_chunks_fallback

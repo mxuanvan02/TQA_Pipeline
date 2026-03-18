@@ -1,0 +1,233 @@
+% ============================================================
+% Paper Draft Content (Template-Agnostic)
+% Usage:
+%   - Copy sections into ACL/EMNLP template later.
+%   - Keep labels/tables; replace placeholders with final numbers.
+% ============================================================
+
+\section{Introduction}
+\label{sec:intro}
+Legal question answering in Vietnamese remains constrained by limited high-quality, domain-grounded datasets, especially for multimodal educational materials (text + figures/tables). We present a practical data construction pipeline for Vietnamese legal QA from textbook-like sources and evaluate whether quality-controlled synthesis yields measurable gains over simpler generation settings.
+
+This work targets legal education use cases and focuses on a reproducible pipeline that transforms raw legal learning documents into structured, evaluable QA records. Our central claim is that multimodal, quality-controlled synthesis can improve dataset quality and downstream legal QA utility compared with text-only or no-filter alternatives.
+
+\paragraph{Contributions.}
+\begin{itemize}
+\item A Vietnamese legal multimodal QA data construction pipeline with staged quality controls.
+\item A controlled experimental matrix with baselines and ablations tailored to compute-constrained settings.
+\item A human evaluation protocol with inter-annotator agreement reporting.
+\item A reproducible artifact package (splits, integrity checks, quality gates, run commands).
+\end{itemize}
+
+\section{Related Work}
+\label{sec:related}
+We situate this work at the intersection of legal NLP benchmarks, synthetic data generation, and multimodal/document QA. Prior legal benchmarks (e.g., LexGLUE, LegalBench, COLIEE-style tasks) demonstrate broad legal reasoning challenges but provide limited coverage for Vietnamese multimodal educational legal QA. Synthetic data approaches improve scale but require careful quality validation. LLM-as-judge frameworks are practical yet known to exhibit bias, motivating cross-judge checks and human auditing. Document-grounded QA literature further motivates explicit handling of OCR and visual grounding.
+
+\section{Task Definition and Research Questions}
+\label{sec:task_rq}
+\paragraph{Task.}
+Given legal educational source documents, construct a QA dataset with fields:
+\texttt{qa\_id, domain\_tag, bloom\_level, context\_payload, question\_content, is\_multimodal, candidate\_answers, ground\_truth, legal\_rationale}.
+
+\paragraph{Research Questions.}
+\begin{itemize}
+\item \textbf{RQ1:} Does the proposed pipeline produce higher-quality QA data than text-only and no-filter baselines?
+\item \textbf{RQ2:} Which components contribute most to quality (multimodal grounding, chunk cleaning, legal-rationale prompting, filtering thresholds)?
+\item \textbf{RQ3:} Does dataset-driven adaptation improve downstream legal QA performance on a held-out human gold test set?
+\end{itemize}
+
+\paragraph{Hypotheses.}
+\begin{itemize}
+\item \textbf{H1:} Multimodal grounding improves groundedness and reduces unsupported questions.
+\item \textbf{H2:} Quality filtering improves legal fluency and reduces factual errors.
+\item \textbf{H3:} Using the constructed dataset improves downstream legal QA metrics over non-adapted baselines.
+\end{itemize}
+
+\section{Dataset Construction Pipeline}
+\label{sec:pipeline}
+\subsection{Stage Overview}
+The pipeline includes: (1) PDF digitization to markdown + images, (2) context structuring and optional chunk cleaning, (3) QA generation with Bloom-level control and legal rationale constraints, and (4) quality evaluation/filtering plus final JSONL export.
+
+\subsection{Data Splits and Leakage Control}
+We use document-level split assignment (train/dev/test) to prevent chunk leakage across splits. Split artifacts and chunk manifests are generated with fixed seeds and stored for reproducibility.
+
+\subsection{Quality Gates}
+Before experimental runs, we enforce four gates:
+\begin{itemize}
+\item Gate A: OCR/chunk coverage
+\item Gate B: valid context ratio
+\item Gate C: parse-valid QA ratio
+\item Gate D: duplicate QA rate
+\end{itemize}
+
+\section{Experimental Setup}
+\label{sec:setup}
+\subsection{Systems Compared}
+\paragraph{Primary system.}
+Full multimodal pipeline with quality filtering.
+
+\paragraph{Baselines.}
+\begin{itemize}
+\item \textbf{B1} Text-only generation (no visual context in generation prompt).
+\item \textbf{B2} No-judge/no-filter setting (raw generation retained).
+\item \textbf{B3} Cross-judge subset evaluation with a different judge model family.
+\end{itemize}
+
+\paragraph{Ablations.}
+\begin{itemize}
+\item \textbf{A1} Disable multimodal alignment criterion during filtering.
+\item \textbf{A2} Disable chunk cleaning in structuring stage.
+\item \textbf{A3} Remove explicit legal-syllogism prompting.
+\item \textbf{A4} Threshold sensitivity (strict vs softer thresholds on dev).
+\end{itemize}
+
+\subsection{Metrics}
+\paragraph{Intrinsic metrics.}
+Groundedness, legal fluency, multimodal alignment, parse-valid rate, duplicate QA rate, diversity.
+
+\paragraph{Human metrics.}
+Legal correctness, groundedness, question quality, distractor quality, visual alignment; agreement reported with percent agreement and Cohen's $\kappa$.
+
+\paragraph{Downstream metrics.}
+Task-specific correctness (e.g., EM/F1 or exact/partial legal QA correctness), with 95\% confidence intervals via bootstrap.
+
+\subsection{Compute and Reproducibility}
+We target limited GPU availability and prioritize reproducible, fixed-split experiments. All runs log seeds, commands, model configs, and hardware summaries.
+To reduce self-judge bias, evaluation uses a judge model configuration separated from the generation model by default; same-model judging is explicitly blocked unless manually overridden.
+
+\section{Results}
+\label{sec:results}
+\paragraph{Claim--Evidence policy (mandatory).}
+Every added claim in this paper must include: (i) motivation/rationale, (ii) empirical evidence, and (iii) reproducible trace (artifact path, command, or table reference). Claims without supporting evidence are treated as hypotheses or future work, not conclusions.
+
+\subsection{Dataset Statistics}
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrr}
+\hline
+Split & \#Docs & \#Contexts \\
+\hline
+Train & 26 & 4183 \\
+Dev   & 11 & 897 \\
+Test  & 11 & 900 \\
+\hline
+\end{tabular}
+\caption{Document-level split summary from generated split artifacts (seed=42), after pruning context documents not present in raw sources.}
+\label{tab:split_stats}
+\end{table}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lc}
+\hline
+Quality Gate & Value \\
+\hline
+Gate A (OCR/chunk coverage) & 106.25\% \\
+Gate B (valid context ratio) & 100.00\% \\
+Gate C (parse-valid QA ratio) & 100.00\% \\
+Gate D (duplicate QA rate) & 0.00\% \\
+\hline
+\end{tabular}
+\caption{Automatic quality gates from pre-experiment checks.}
+\label{tab:quality_gates}
+\end{table}
+
+\subsection{Main Baseline/Ablation Comparison}
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{lcccccc}
+\hline
+System & Grounded. $\uparrow$ & Legal Fluency $\uparrow$ & MM Align. $\uparrow$ & Parse-valid $\uparrow$ & Dup. Rate $\downarrow$ & Human Score $\uparrow$ \\
+\hline
+Primary (current, pre-Stage4) & \texttt{N/A} & \texttt{N/A} & \texttt{N/A} & 100.00\% & 0.00\% & \texttt{TBD} \\
+B1 Text-only & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} \\
+B2 No-filter & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} \\
+A1 No MM-align & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} \\
+A2 No cleaning & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} \\
+A3 No syllogism & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} & \texttt{TODO} \\
+\hline
+\end{tabular}
+\caption{Main comparison table. Current row uses available intrinsic metrics from 120 QA records in chunk checkpoints; quality and human-dependent metrics are filled after full Stage 3/4 and annotation.}
+\label{tab:main_results}
+\end{table*}
+
+\paragraph{Current intrinsic snapshot.}
+Using currently available QA chunk checkpoints (fallback source when \texttt{raw\_qa\_pairs.json} is empty), we observe: 120 QA records, parse-valid rate 100.00\%, duplicate rate 0.00\%, diversity ratio 88.33\%, and Bloom-level distribution of 30 (Remember), 47 (Understand), 43 (Apply). These are preliminary and will be superseded by full-run baseline/ablation results.
+
+\subsection{Human Evaluation Agreement}
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lcc}
+\hline
+Criterion & Percent Agreement & Cohen's $\kappa$ \\
+\hline
+Legal correctness & \texttt{TODO} & \texttt{TODO} \\
+Groundedness & \texttt{TODO} & \texttt{TODO} \\
+Question quality & \texttt{TODO} & \texttt{TODO} \\
+Distractor quality & \texttt{TODO} & \texttt{TODO} \\
+Visual alignment & \texttt{TODO} & \texttt{TODO} \\
+\hline
+\end{tabular}
+\caption{Inter-annotator agreement on human evaluation subset.}
+\label{tab:agreement}
+\end{table}
+
+\subsection{Downstream Utility}
+We compare a base downstream setup against the same setup adapted with the constructed dataset. Report absolute/relative gains and 95\% confidence intervals.
+
+\subsection{Claim-to-Evidence Ledger}
+\label{sec:claim_evidence}
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{p{0.19\linewidth}p{0.20\linewidth}p{0.19\linewidth}p{0.34\linewidth}}
+\hline
+Claim & Why it matters & Evidence type & Evidence pointer \\
+\hline
+Split prevents leakage & Fair evaluation & Integrity/leakage audit & \texttt{research/artifacts/context\_manifest.json}; \texttt{research/results/integrity\_*.json} \\
+Quality-controlled pipeline improves data quality & Core contribution & Baseline/ablation + human eval & Table~\ref{tab:main_results}, Table~\ref{tab:agreement} \\
+Dataset improves downstream QA & Utility contribution & Downstream metrics + CI & \texttt{research/results/downstream\_*.json}, bootstrap report \\
+\hline
+\end{tabular}
+\caption{Claim-to-evidence ledger. Every major statement must map to auditable evidence.}
+\label{tab:claim_evidence}
+\end{table*}
+
+\section{Error Analysis}
+\label{sec:error}
+Provide at least 30 representative failure cases, grouped by taxonomy:
+\begin{itemize}
+\item unsupported or weakly grounded question
+\item legal reasoning inconsistency
+\item distractor ambiguity
+\item visual misalignment
+\item OCR-induced context corruption
+\end{itemize}
+
+\section{Discussion}
+\label{sec:discussion}
+Discuss where improvements are robust, where gains are fragile, and how compute constraints affect external validity.
+
+\section{Ethics, Licensing, and Responsible Release}
+\label{sec:ethics}
+Describe source permissions, release constraints, misuse risks, and mitigation measures. Explicitly state that dataset outputs are not legal advice.
+
+\section{Limitations}
+\label{sec:limitations}
+Cover domain coverage limits, synthetic label noise risk, judge bias, and dependence on OCR quality.
+
+\section{Conclusion}
+\label{sec:conclusion}
+Summarize findings against RQ1--RQ3 and outline next steps for broader legal-domain expansion and stronger human-centered validation.
+
+% ============================================================
+% Appendix Suggestions
+% A. Prompts and parsing rules
+% B. Split manifests and integrity checks
+% C. Command list for reproducing each table
+% D. Additional error cases
+% ============================================================

@@ -114,9 +114,17 @@ class QAGenerator:
     Fallback: HuggingFace generate() with batched evaluation.
     """
 
-    def __init__(self, cfg: LLMConfig, gpu_cfg: GPUOptConfig | None = None) -> None:
+    def __init__(
+        self,
+        cfg: LLMConfig,
+        gpu_cfg: GPUOptConfig | None = None,
+        use_visual_context: bool = True,
+        enforce_legal_syllogism: bool = True,
+    ) -> None:
         self.cfg = cfg
         self.gpu_cfg = gpu_cfg or CFG.gpu
+        self.use_visual_context = use_visual_context
+        self.enforce_legal_syllogism = enforce_legal_syllogism
         self._model = None
         self._tokenizer = None
         self._vllm_engine = None
@@ -211,13 +219,23 @@ class QAGenerator:
     ) -> str:
         """Build a fully-formatted prompt string for one context + bloom level."""
         visual_ctx = ""
-        if context.get("visual_descriptions"):
+        if self.use_visual_context and context.get("visual_descriptions"):
             descs = [d.get("summary", "") for d in context["visual_descriptions"]]
             visual_ctx = "## Visual Information:\n" + "\n".join(
                 f"- Image: {d}" for d in descs if d
             )
 
-        user_prompt = QA_GENERATION_TEMPLATE.format(
+        template = QA_GENERATION_TEMPLATE
+        if not self.enforce_legal_syllogism:
+            template = template.replace(
+                "3. Structure the rationale using **Legal Syllogism**:\n"
+                "   - **Major Premise**: The general legal rule/article.\n"
+                "   - **Minor Premise**: The specific facts of the question scenario.\n"
+                "   - **Conclusion**: The logical deduction from the premises.\n",
+                "3. Provide a concise legal rationale grounded in the context.\n",
+            )
+
+        user_prompt = template.format(
             n_questions=n_questions,
             bloom_level=bloom_level,
             context_text=context["text"][:2000],
@@ -468,6 +486,8 @@ def run_qag(
     drive_cfg: DriveBackupConfig | None = None,
     gpu_cfg: GPUOptConfig | None = None,
     limit: int | None = None,
+    use_visual_context: bool = True,
+    enforce_legal_syllogism: bool = True,
 ) -> list[dict[str, Any]]:
     """
     Generate QA pairs for all contexts across all Bloom levels.
@@ -523,7 +543,12 @@ def run_qag(
         len(new_contexts), qag_cfg.batch_size, len(contexts) - len(new_contexts),
     )
 
-    generator = QAGenerator(llm_cfg, gpu_cfg)
+    generator = QAGenerator(
+        llm_cfg,
+        gpu_cfg,
+        use_visual_context=use_visual_context,
+        enforce_legal_syllogism=enforce_legal_syllogism,
+    )
     generator._load()  # Pre-load LLM + tokenizer (needed by _build_prompt)
     batch_count = 0
     total_batches = (len(new_contexts) + qag_cfg.batch_size - 1) // qag_cfg.batch_size
@@ -782,17 +807,48 @@ def main() -> None:
         "--batch-size", type=int, default=None,
         help="Override batch size (default: from config)",
     )
+    parser.add_argument(
+        "--text-only",
+        action="store_true",
+        help="Ablation: disable visual context in prompts",
+    )
+    parser.add_argument(
+        "--no-legal-syllogism",
+        action="store_true",
+        help="Ablation: remove explicit legal syllogism constraint",
+    )
+    parser.add_argument(
+        "--model-name",
+        type=str,
+        default=None,
+        help="Override LLM model name for generation",
+    )
     args = parser.parse_args()
 
     log.info("Stage 3 -- Synthetic QAG Pipeline (Batched)")
 
+    from dataclasses import replace
+    llm_cfg = CFG.llm
+    if args.model_name:
+        llm_cfg = replace(llm_cfg, model_name=args.model_name)
+
     # Override batch size from CLI if provided
     if args.batch_size:
-        from dataclasses import replace
         qag_cfg = replace(CFG.qag, batch_size=args.batch_size)
-        results = run_qag(limit=args.limit, qag_cfg=qag_cfg)
+        results = run_qag(
+            limit=args.limit,
+            llm_cfg=llm_cfg,
+            qag_cfg=qag_cfg,
+            use_visual_context=not args.text_only,
+            enforce_legal_syllogism=not args.no_legal_syllogism,
+        )
     else:
-        results = run_qag(limit=args.limit)
+        results = run_qag(
+            limit=args.limit,
+            llm_cfg=llm_cfg,
+            use_visual_context=not args.text_only,
+            enforce_legal_syllogism=not args.no_legal_syllogism,
+        )
 
     if not results:
         log.warning("No QA pairs generated. Check multimodal_contexts.json.")

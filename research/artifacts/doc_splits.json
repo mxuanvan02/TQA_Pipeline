@@ -1,0 +1,90 @@
+{
+  "meta": {
+    "seed": 42,
+    "train_ratio": 0.7,
+    "dev_ratio": 0.15,
+    "test_ratio": 0.15000000000000005,
+    "total_contexts": 5980,
+    "total_multimodal_contexts": 24,
+    "total_docs": 48
+  },
+  "doc_splits": {
+    "train": [
+      "14. LUAT DAN SU VIET NAM-TAP2",
+      "24. LUAT TO TUNG DAN SU VN",
+      "26.LUAT HINH SU VN (PHAN CHUNG)",
+      "27.Q1.LUAT HINHSU VN (P. CAC TOI PHAM)-QUYEN 1",
+      "4.LICH SU NHA NUOC VA PHAP LUAT THE GIOI",
+      "27.Q2.LUAT HINHSU VN (P. CAC TOI PHAM)-QUYEN 2",
+      "16. LUAT THUONG MAI VIET NAM-TAPII",
+      "34.LUAT THUONG MAI QUOC TE",
+      "23. LUAT MOI TRUONG",
+      "15. LUAT THUONG MAI VIET NAM-TAP1",
+      "37. LUAT DAT DAI",
+      "4. LICH SU NNUOC & PLUAT VIET NAM",
+      "31.32. LUAT QUOC TE",
+      "38.LUAT LAO DONG VIET NAM",
+      "25. LUAT HON NHAN VA GIA DINH VN",
+      "10. XAY DUNG VAN BAN PHAPLUAT",
+      "13. LUAT DAN SU VIET NAM-TAP1",
+      "42. TBG PHÁP LUẬT HỘ TỊCH",
+      "LUAT BINH DANG GIOI.doc",
+      "46. TOI PHAM HOC",
+      "39. PHAP LUAT SO HUU TRI TUE",
+      "51. TBG Pháp luật về thị trường BĐS",
+      "28. LUAT TO TUNG HINH SU VIET NAM",
+      "48. TBG. PHAP LUAT AN SINH XA HOI",
+      "52. TBG PHAP LUAT VA KY NANG GIAI QUYET TRANH CHAP DAT DAI",
+      "43. THUC HANH NGHE NGHIEP"
+    ],
+    "dev": [
+      "40. TAM LY HOC TU PHAP",
+      "22. LUAT TO TUNG HANH CHINH VIET NAM",
+      "KHOA HOC DIEU TRA HINH SU",
+      "21. LUAT HANH CHINH VIET NAM",
+      "LICH SU CAC HOC THUYET CHINH TRI VA PHAP LUAT",
+      "50. TBG GIAI QUYET CAC TRUONG HOP THUA KE",
+      "TLHT PHAP LUAT XUAT NHAP KHAU QUA BIEN GIOI",
+      "53. TBG KY NANG DAM PHAN, GIAO KET VA GIAI QUYET TRANH CHAP HOP DONG DS",
+      "41.TBG PHÁP LUẬT CẠNH TRANH",
+      "29. LUAT NGAN SACH NHA NUOC",
+      "29. LUAT THUE VIET NAM"
+    ],
+    "test": [
+      "19.LUAT HIEN PHAP NUOC NGOAI",
+      "30. LUAT NGAN HANG VIET NAM",
+      "17,18. LUAT HIEN PHAP VIET NAM",
+      "11.12.LY LUAN CHUNG VE NHA NUOC VA PHAP LUAT",
+      "33.TU PHAP QUOC TE",
+      "20.LUAT HOC SO SANH",
+      "BG Pháp luật về Thương mại hóa tài sản trí tuệ (ThS. Đỗ Thị Diện)",
+      "47. LY LUAN DINH TOI DANH",
+      "49. TBG HOAT DONG CONG CHUNG, CHUNG THUC",
+      "LUAT CHUNG KHOAN",
+      "36. LUAT KINH TE QUOC TE"
+    ]
+  },
+  "summary": {
+    "train": {
+      "n_docs": 26,
+      "n_contexts": 4183,
+      "n_multimodal": 13,
+      "context_ratio": 0.6994983277591973,
+      "multimodal_ratio": 0.0031078173559646186
+    },
+    "dev": {
+      "n_docs": 11,
+      "n_contexts": 897,
+      "n_multimodal": 3,
+      "context_ratio": 0.15,
+      "multimodal_ratio": 0.0033444816053511705
+    },
+    "test": {
+      "n_docs": 11,
+      "n_contexts": 900,
+      "n_multimodal": 8,
+      "context_ratio": 0.1505016722408027,
+      "multimodal_ratio": 0.008888888888888889
+    }
+  }
+}

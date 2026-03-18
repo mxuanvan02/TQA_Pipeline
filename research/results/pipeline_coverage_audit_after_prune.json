@@ -1,0 +1,248 @@
+{
+  "counts": {
+    "raw_pdfs": 48,
+    "interim_mds": 51,
+    "contexts_total": 5980,
+    "context_docs": 48,
+    "context_chunks": 5980,
+    "qa_chunk_files": 101,
+    "qa_records": 120,
+    "qa_unique_chunks": 101,
+    "raw_qa_pairs": 0,
+    "filtered_qa_pairs": 0,
+    "evaluated_qa_files": 0,
+    "dataset_jsonl_records": 0
+  },
+  "coverage": {
+    "qa_chunk_over_context_chunk_ratio": 0.016889632107023413,
+    "missing_context_chunks_without_qa": 5879,
+    "unknown_qa_chunks_not_in_contexts": 0
+  },
+  "consistency": {
+    "qa_id_duplicates": 0,
+    "question_ground_truth_duplicates": 0,
+    "docs_in_contexts_not_in_raw_pdfs": 0,
+    "raw_pdfs_without_context_docs": 0
+  },
+  "samples": {
+    "missing_chunk_ids_head": [
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_10",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_100",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_101",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_102",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_104",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_105",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_106",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_107",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_108",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_109",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_11",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_110",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_111",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_112",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_113",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_114",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_115",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_116",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_119",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_121",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_122",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_123",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_126",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_127",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_13",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_130",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_131",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_133",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_134",
+      "10. XAY DUNG VAN BAN PHAPLUAT_chunk_135"
+    ],
+    "unknown_chunk_ids_head": [],
+    "docs_in_contexts_not_in_raw_pdfs": [],
+    "raw_pdfs_without_context_docs": [],
+    "lowest_doc_coverage_head": [
+      {
+        "doc_id": "14. LUAT DAN SU VIET NAM-TAP2",
+        "expected_chunks": 275,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "15. LUAT THUONG MAI VIET NAM-TAP1",
+        "expected_chunks": 200,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "16. LUAT THUONG MAI VIET NAM-TAPII",
+        "expected_chunks": 206,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "17,18. LUAT HIEN PHAP VIET NAM",
+        "expected_chunks": 125,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "19.LUAT HIEN PHAP NUOC NGOAI",
+        "expected_chunks": 161,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "20.LUAT HOC SO SANH",
+        "expected_chunks": 84,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "21. LUAT HANH CHINH VIET NAM",
+        "expected_chunks": 107,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "22. LUAT TO TUNG HANH CHINH VIET NAM",
+        "expected_chunks": 142,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "23. LUAT MOI TRUONG",
+        "expected_chunks": 203,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "24. LUAT TO TUNG DAN SU VN",
+        "expected_chunks": 257,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "25. LUAT HON NHAN VA GIA DINH VN",
+        "expected_chunks": 187,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "26.LUAT HINH SU VN (PHAN CHUNG)",
+        "expected_chunks": 243,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "27.Q1.LUAT HINHSU VN (P. CAC TOI PHAM)-QUYEN 1",
+        "expected_chunks": 243,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "27.Q2.LUAT HINHSU VN (P. CAC TOI PHAM)-QUYEN 2",
+        "expected_chunks": 219,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "28. LUAT TO TUNG HINH SU VIET NAM",
+        "expected_chunks": 55,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      }
+    ],
+    "highest_doc_coverage_head": [
+      {
+        "doc_id": "48. TBG. PHAP LUAT AN SINH XA HOI",
+        "expected_chunks": 41,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "49. TBG HOAT DONG CONG CHUNG, CHUNG THUC",
+        "expected_chunks": 48,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "50. TBG GIAI QUYET CAC TRUONG HOP THUA KE",
+        "expected_chunks": 74,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "51. TBG Pháp luật về thị trường BĐS",
+        "expected_chunks": 65,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "52. TBG PHAP LUAT VA KY NANG GIAI QUYET TRANH CHAP DAT DAI",
+        "expected_chunks": 28,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "53. TBG KY NANG DAM PHAN, GIAO KET VA GIAI QUYET TRANH CHAP HOP DONG DS",
+        "expected_chunks": 48,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "BG Pháp luật về Thương mại hóa tài sản trí tuệ (ThS. Đỗ Thị Diện)",
+        "expected_chunks": 56,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "KHOA HOC DIEU TRA HINH SU",
+        "expected_chunks": 125,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "LICH SU CAC HOC THUYET CHINH TRI VA PHAP LUAT",
+        "expected_chunks": 92,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "LUAT BINH DANG GIOI.doc",
+        "expected_chunks": 114,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "LUAT CHUNG KHOAN",
+        "expected_chunks": 25,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "TLHT PHAP LUAT XUAT NHAP KHAU QUA BIEN GIOI",
+        "expected_chunks": 68,
+        "qa_chunks_present": 0,
+        "coverage": 0.0
+      },
+      {
+        "doc_id": "13. LUAT DAN SU VIET NAM-TAP1",
+        "expected_chunks": 144,
+        "qa_chunks_present": 1,
+        "coverage": 0.006944444444444444
+      },
+      {
+        "doc_id": "10. XAY DUNG VAN BAN PHAPLUAT",
+        "expected_chunks": 177,
+        "qa_chunks_present": 56,
+        "coverage": 0.3163841807909605
+      },
+      {
+        "doc_id": "11.12.LY LUAN CHUNG VE NHA NUOC VA PHAP LUAT",
+        "expected_chunks": 100,
+        "qa_chunks_present": 44,
+        "coverage": 0.44
+      }
+    ]
+  }
+}

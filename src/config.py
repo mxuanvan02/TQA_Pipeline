@@ -13,6 +13,7 @@ Output: Importable constants & dataclass singletons.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -36,29 +37,75 @@ logger = logging.getLogger("tqa_pipeline")
 class PathConfig:
     """Immutable directory layout for the entire pipeline."""
 
-    root: Path = Path("/content/TQA_Pipeline")
+    root: Path = field(
+        default_factory=lambda: Path(os.environ.get("TQA_ROOT", "/content/TQA_Pipeline"))
+    )
 
-    # Data directories
+    # Data directories (auto-resolved in __post_init__)
     raw: Path = field(default=Path("/content/TQA_Pipeline/data/raw"))
     interim: Path = field(default=Path("/content/TQA_Pipeline/data/interim"))
     processed: Path = field(default=Path("/content/TQA_Pipeline/data/processed"))
 
-    # Interim sub-paths (created lazily by each stage)
-    interim_images: Path = field(
-        default=Path("/content/TQA_Pipeline/data/interim/images")
-    )
-    multimodal_contexts: Path = field(
-        default=Path("/content/TQA_Pipeline/data/interim/multimodal_contexts.json")
-    )
-    raw_qa_pairs: Path = field(
-        default=Path("/content/TQA_Pipeline/data/interim/raw_qa_pairs.json")
-    )
-    filtered_qa_pairs: Path = field(
-        default=Path("/content/TQA_Pipeline/data/interim/filtered_qa_pairs.json")
-    )
-    dataset_jsonl: Path = field(
-        default=Path("/content/TQA_Pipeline/data/processed/dataset.jsonl")
-    )
+    # Interim sub-paths (auto-resolved in __post_init__)
+    interim_images: Path = field(default=Path("/content/TQA_Pipeline/data/interim/images"))
+    multimodal_contexts: Path = field(default=Path("/content/TQA_Pipeline/data/interim/multimodal_contexts.json"))
+    raw_qa_pairs: Path = field(default=Path("/content/TQA_Pipeline/data/interim/raw_qa_pairs.json"))
+    filtered_qa_pairs: Path = field(default=Path("/content/TQA_Pipeline/data/interim/filtered_qa_pairs.json"))
+    dataset_jsonl: Path = field(default=Path("/content/TQA_Pipeline/data/processed/dataset.jsonl"))
+
+    def __post_init__(self) -> None:
+        root = Path(os.environ.get("TQA_ROOT", str(self.root))).expanduser()
+
+        # Prefer explicit override; otherwise auto-detect old/new dataset layout.
+        data_dir_override = os.environ.get("TQA_DATA_DIR")
+        if data_dir_override:
+            data_base = Path(data_dir_override).expanduser()
+        else:
+            default_data_base = root / "data"
+            legacy_output_base = default_data_base / "output"
+            # Score candidate layouts and pick the one that actually has
+            # the most pipeline artifacts (helps resume from Stage 3/4).
+            def _score(base: Path) -> int:
+                score = 0
+                if (base / "raw").exists():
+                    score += 1
+                    try:
+                        if any((base / "raw").glob("*.pdf")) or any((base / "raw").glob("*.PDF")):
+                            score += 1
+                    except Exception:
+                        pass
+
+                if (base / "interim").exists():
+                    score += 1
+                if (base / "interim" / "multimodal_contexts.json").exists():
+                    score += 4
+                try:
+                    if any((base / "interim" / "contexts").glob("*.json")):
+                        score += 3
+                except Exception:
+                    pass
+                try:
+                    if any((base / "interim" / "qa_chunks").glob("*.json")):
+                        score += 2
+                except Exception:
+                    pass
+                if (base / "processed" / "dataset.jsonl").exists():
+                    score += 4
+                return score
+
+            default_score = _score(default_data_base)
+            legacy_score = _score(legacy_output_base)
+            data_base = legacy_output_base if legacy_score > default_score else default_data_base
+
+        object.__setattr__(self, "root", root)
+        object.__setattr__(self, "raw", data_base / "raw")
+        object.__setattr__(self, "interim", data_base / "interim")
+        object.__setattr__(self, "processed", data_base / "processed")
+        object.__setattr__(self, "interim_images", data_base / "interim" / "images")
+        object.__setattr__(self, "multimodal_contexts", data_base / "interim" / "multimodal_contexts.json")
+        object.__setattr__(self, "raw_qa_pairs", data_base / "interim" / "raw_qa_pairs.json")
+        object.__setattr__(self, "filtered_qa_pairs", data_base / "interim" / "filtered_qa_pairs.json")
+        object.__setattr__(self, "dataset_jsonl", data_base / "processed" / "dataset.jsonl")
 
     def ensure_dirs(self) -> None:
         """Create every directory if it does not already exist."""
@@ -155,6 +202,8 @@ class QAGConfig:
 class EvalConfig:
     """LLM-as-a-judge binary scoring (Stage 4, optimized for 0.5B model)."""
 
+    # Separate judge model from generator model to reduce self-judge bias.
+    judge_model_name: str = "Qwen/Qwen2.5-1.5B-Instruct"
     groundedness_threshold: float = 1.0     # 1 (Pass) or 0 (Fail)
     multimodal_alignment_threshold: float = 1.0 # 1 (Pass) or 0 (Fail)
     legal_fluency_threshold: float = 1.0    # 1 (Pass) or 0 (Fail)
@@ -200,38 +249,42 @@ class DriveBackupConfig:
             replaces hardcoded paths scattered across multiple files.
     """
 
-    drive_root: Path = Path("/content/drive/MyDrive")
+    drive_root: Path = field(
+        default_factory=lambda: Path(os.environ.get("TQA_DRIVE_ROOT", "/content/drive/MyDrive"))
+    )
     backup_base: Path = field(
         default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup")
     )
 
-    # Stage 1 — Digitization
-    interim_md: Path = field(
-        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim")
-    )
-    interim_images: Path = field(
-        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/images")
-    )
+    # Stage 1 — Digitization (auto-resolved in __post_init__)
+    interim_md: Path = field(default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim"))
+    interim_images: Path = field(default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/images"))
 
-    # Stage 2 — Structuring
-    contexts_dir: Path = field(
-        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/contexts")
-    )
+    # Stage 2 — Structuring (auto-resolved in __post_init__)
+    contexts_dir: Path = field(default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/contexts"))
 
-    # Stage 3 — QAG
-    qa_chunks_dir: Path = field(
-        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/qa_chunks")
-    )
+    # Stage 3 — QAG (auto-resolved in __post_init__)
+    qa_chunks_dir: Path = field(default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/qa_chunks"))
 
-    # Stage 4 — Evaluation
-    evaluated_qa_dir: Path = field(
-        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/evaluated_qa")
-    )
+    # Stage 4 — Evaluation (auto-resolved in __post_init__)
+    evaluated_qa_dir: Path = field(default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/evaluated_qa"))
 
-    # Final outputs
-    processed_dir: Path = field(
-        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/processed")
-    )
+    # Final outputs (auto-resolved in __post_init__)
+    processed_dir: Path = field(default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/processed"))
+
+    def __post_init__(self) -> None:
+        drive_root = Path(os.environ.get("TQA_DRIVE_ROOT", str(self.drive_root))).expanduser()
+        backup_override = os.environ.get("TQA_BACKUP_BASE")
+        backup_base = Path(backup_override).expanduser() if backup_override else drive_root / "Colab_Workspaces" / "TQA_Pipeline_Backup"
+
+        object.__setattr__(self, "drive_root", drive_root)
+        object.__setattr__(self, "backup_base", backup_base)
+        object.__setattr__(self, "interim_md", backup_base / "interim")
+        object.__setattr__(self, "interim_images", backup_base / "interim" / "images")
+        object.__setattr__(self, "contexts_dir", backup_base / "interim" / "contexts")
+        object.__setattr__(self, "qa_chunks_dir", backup_base / "interim" / "qa_chunks")
+        object.__setattr__(self, "evaluated_qa_dir", backup_base / "interim" / "evaluated_qa")
+        object.__setattr__(self, "processed_dir", backup_base / "processed")
 
     def is_drive_mounted(self) -> bool:
         """Check if Google Drive is actually mounted (not just a local dir).
