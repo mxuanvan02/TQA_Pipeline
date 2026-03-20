@@ -200,16 +200,51 @@ class QAGConfig:
 
 @dataclass(frozen=True)
 class EvalConfig:
-    """LLM-as-a-judge binary scoring (Stage 4, optimized for 0.5B model)."""
+    """
+    LLM-as-a-judge binary scoring (Stage 4).
 
-    # Separate judge model from generator model to reduce self-judge bias.
-    judge_model_name: str = "Qwen/Qwen2.5-1.5B-Instruct"
-    groundedness_threshold: float = 1.0     # 1 (Pass) or 0 (Fail)
-    multimodal_alignment_threshold: float = 1.0 # 1 (Pass) or 0 (Fail)
-    legal_fluency_threshold: float = 1.0    # 1 (Pass) or 0 (Fail)
-    overall_threshold: float = 1.0          # Must pass all to be included
-    score_scale: int = 1                    # Binary indicator
-    batch_size: int = 512                   # Massive batch size for tiny output (256-token)
+    # [Paper Note — Judge Model Design Choice]
+    # To mitigate *same-family bias* (where a judge from the same model
+    # family as the generator tends to over-approve generated outputs due
+    # to shared pre-training data and alignment methodology), we deliberately
+    # select a judge from a DIFFERENT model family than the generator.
+    #
+    # Generator : Qwen/Qwen2.5-0.5B-Instruct  (Alibaba Cloud / Qwen family)
+    # Judge      : google/gemma-2-2b-it         (Google / Gemma family)
+    #
+    # Rationale for gemma-2-2b-it in LOW-RESOURCE setting:
+    #   - 2B parameters → fits on Colab T4/L4 even with 4-bit quantisation
+    #   - Supported by BitsAndBytes 4-bit (NF4) → ~1.0 GB VRAM footprint
+    #   - Multilingual pre-training includes Vietnamese text
+    #   - Open weights, no API key required (reproducible research)
+    #   - DIFFERENT architecture family from Qwen → reduces self-reinforcement
+    #
+    # Alternative lightweight cross-family judges (if gemma-2 unavailable):
+    #   - microsoft/Phi-3-mini-4k-instruct (3.8B, Microsoft family)
+    #   - meta-llama/Llama-3.2-3B-Instruct (3B, Meta family — needs HF token)
+    #
+    # Cross-model validation (for paper ablation):
+    #   Run evaluate.py with --model-name <cross_validation_model_name>
+    #   to verify score distributions are consistent across judge families.
+    """
+
+    # Judge from a different model family than the generator (anti-bias design).
+    # [Paper Note] Cited in §4 Quality Analysis as cross-family judge strategy.
+    judge_model_name: str = "google/gemma-2-2b-it"
+
+    # Fallback judge if gemma-2 download fails (same-size, different family).
+    # Usage: python -m src.04_evaluate --model-name microsoft/Phi-3-mini-4k-instruct
+    fallback_judge_model_name: str = "microsoft/Phi-3-mini-4k-instruct"
+
+    # Binary pass/fail thresholds (scale: 0 = Fail, 1 = Pass).
+    # [Paper Note] §4.1: "A QA pair is retained if and only if all three
+    # criteria receive a binary Pass score from the cross-family judge."
+    groundedness_threshold: float = 1.0         # Context grounding: must be fully supported
+    multimodal_alignment_threshold: float = 1.0 # Visual reference: must correctly cite visuals
+    legal_fluency_threshold: float = 1.0        # Syllogism: Major→Minor→Conclusion must be valid
+    overall_threshold: float = 1.0              # Composite: all criteria must pass
+    score_scale: int = 1                        # Binary (0/1) — see [Paper Note] §4.1
+    batch_size: int = 512                       # Short output (256 tokens) allows very large batches
 
 
 # ─────────────────────────────────────────────
