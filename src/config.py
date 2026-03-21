@@ -134,7 +134,7 @@ class VLMConfig:
 class LLMConfig:
     """Text-only LLM settings (Stage 3 — QAG, Stage 4 — Evaluation)."""
 
-    model_name: str = "Qwen/Qwen2.5-0.5B-Instruct"  # Fallback: "Qwen/Qwen2.5-1.5B-Instruct" or "Qwen/Qwen2.5-3B-Instruct"
+    model_name: str = "Qwen/Qwen2.5-7B-Instruct"  # Changed from 0.5B to 7B for much better quality
     torch_dtype: str = "bfloat16"
     load_in_4bit: bool = True
     use_vllm: bool = True             # Primary offline inference engine
@@ -194,7 +194,7 @@ class QAGConfig:
         "Apply",         # Level 3 — apply to new scenario
     )
     questions_per_level: int = 1      # per chunk, per Bloom level
-    batch_size: int = 256             # Large batch to feed vLLM continuous batching scheduler
+    batch_size: int = 32              # Reduced for T4 GPU (16GB VRAM)
     merge_bloom_levels: bool = True   # merge all bloom levels into one GPU call (3× speedup)
 
 
@@ -244,7 +244,7 @@ class EvalConfig:
     legal_fluency_threshold: float = 1.0        # Syllogism: Major→Minor→Conclusion must be valid
     overall_threshold: float = 1.0              # Composite: all criteria must pass
     score_scale: int = 1                        # Binary (0/1) — see [Paper Note] §4.1
-    batch_size: int = 512                       # Short output (256 tokens) allows very large batches
+    batch_size: int = 32                        # Reduced for T4 GPU (16GB VRAM)
 
 
 # ─────────────────────────────────────────────
@@ -288,7 +288,7 @@ class DriveBackupConfig:
         default_factory=lambda: Path(os.environ.get("TQA_DRIVE_ROOT", "/content/drive/MyDrive"))
     )
     backup_base: Path = field(
-        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup")
+        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup_7B")
     )
 
     # Stage 1 — Digitization (auto-resolved in __post_init__)
@@ -310,7 +310,7 @@ class DriveBackupConfig:
     def __post_init__(self) -> None:
         drive_root = Path(os.environ.get("TQA_DRIVE_ROOT", str(self.drive_root))).expanduser()
         backup_override = os.environ.get("TQA_BACKUP_BASE")
-        backup_base = Path(backup_override).expanduser() if backup_override else drive_root / "Colab_Workspaces" / "TQA_Pipeline_Backup"
+        backup_base = Path(backup_override).expanduser() if backup_override else drive_root / "Colab_Workspaces" / "TQA_Pipeline_Backup_7B"
 
         object.__setattr__(self, "drive_root", drive_root)
         object.__setattr__(self, "backup_base", backup_base)

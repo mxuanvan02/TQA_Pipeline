@@ -342,6 +342,7 @@ class QAJudge:
                         temperature=self.cfg.eval_temperature,
                         do_sample=False,
                         pad_token_id=self._tokenizer.pad_token_id,
+                        use_cache=False,  # Fixes DynamicCache error for certain models
                     )
 
                 # Decode and parse each output
@@ -392,6 +393,7 @@ class QAJudge:
                         temperature=self.cfg.eval_temperature,
                         do_sample=False,
                         pad_token_id=self._tokenizer.pad_token_id,
+                        use_cache=False,  # Fixes DynamicCache error
                     )
 
                 response = self._tokenizer.decode(
