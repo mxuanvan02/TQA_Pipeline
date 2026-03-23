@@ -73,7 +73,7 @@ Respond using strict XML tags.
 """
 
 JUDGE_TEMPLATE = """\
-Evaluate the following QA pair on a Pass (1) or Fail (0) basis for each criterion:
+Evaluate the following QA pair on a Pass (1) or Fail (0) basis for each criterion, and categorize its cognitive depth.
 
 ## Context:
 {context}
@@ -92,11 +92,18 @@ Evaluate the following QA pair on a Pass (1) or Fail (0) basis for each criterio
 2. **Multimodal Alignment**: If visual info exists, does the QA properly reference it? (1 = Yes, 0 = No/Ignored. If no visuals, reply '1')
 3. **Legal Fluency**: Is the legal reasoning (syllogism) correct and logical? (1 = Yes, 0 = No)
 
+## Taxonomy Classification:
+Categorize the question into: 
+- **Remember**: Direct lookup of definitions/clauses.
+- **Understand**: Explanation or summarization.
+- **Apply**: Scenario-based reasoning.
+
 ## Output Format (strict XML tags):
 <evaluation>
 <groundedness>1 or 0</groundedness>
 <multimodal_alignment>1 or 0</multimodal_alignment>
 <legal_fluency>1 or 0</legal_fluency>
+<taxonomy_level>Remember/Understand/Apply</taxonomy_level>
 <justification>one-sentence explanation</justification>
 </evaluation>
 
@@ -435,6 +442,7 @@ def _parse_eval_xml(text: str) -> dict[str, Any] | None:
         "groundedness": 0.0,
         "multimodal_alignment": 0.0,
         "legal_fluency": 0.0,
+        "taxonomy_level": "Understand",  # Default fallback
         "justification": "",
         "overall": 0.0,
     }
@@ -442,6 +450,7 @@ def _parse_eval_xml(text: str) -> dict[str, Any] | None:
     g_match = re.search(r"<groundedness>([\s\S]*?)</groundedness>", text, re.IGNORECASE)
     m_match = re.search(r"<multimodal_alignment>([\s\S]*?)</multimodal_alignment>", text, re.IGNORECASE)
     l_match = re.search(r"<legal_fluency>([\s\S]*?)</legal_fluency>", text, re.IGNORECASE)
+    t_match = re.search(r"<taxonomy_level>([\s\S]*?)</taxonomy_level>", text, re.IGNORECASE)
     j_match = re.search(r"<justification>([\s\S]*?)</justification>", text, re.IGNORECASE)
 
     if not (g_match and m_match and l_match):
@@ -457,6 +466,9 @@ def _parse_eval_xml(text: str) -> dict[str, Any] | None:
 
         if j_match:
             scores["justification"] = j_match.group(1).strip()
+            
+        if t_match:
+            scores["taxonomy_level"] = t_match.group(1).strip().capitalize()
 
         scores["overall"] = 1.0 if (scores["groundedness"] == 1.0 and scores["legal_fluency"] == 1.0) else 0.0
 

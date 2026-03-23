@@ -246,6 +246,36 @@ class EvalConfig:
     score_scale: int = 1                        # Binary (0/1) — see [Paper Note] §4.1
     batch_size: int = 32                        # Reduced for T4 GPU (16GB VRAM)
 
+    # --- Augmented Evaluation Prompts ---
+    # [Paper Note] §5.2: "To ensure granular quality control, we supplement the binary
+    # pass/fail scoring with secondary checks for Legal Grounding and Bloom Taxonomy classification."
+    legal_grounding_template: str = """
+[Bối cảnh pháp lý]: {context}
+[Câu hỏi]: {question}
+[Câu trả lời candidate]: {answer}
+
+NHIỆM VỤ: Bạn là một Thẩm phán nghiêm khắc. Hãy kiểm tra xem Câu trả lời có sử dụng bất kỳ thông tin nào KHÔNG nằm trong [Bối cảnh pháp lý] ở trên không? 
+Đặc biệt chú ý đến: Tên văn bản, Số hiệu điều luật, và các mốc thời gian.
+
+CHỈ TRẢ VỀ JSON:
+{{
+  "is_grounded": true/false,
+  "unsupported_facts": ["danh sách các ý kiến bịa đặt"],
+  "score": 0-1
+}}
+"""
+
+    bloom_classifier_template: str = """
+Câu hỏi: {question}
+
+NHIỆM VỤ: Phân loại câu hỏi này vào một trong 3 cấp độ Bloom:
+1. 'Remember': Hỏi trực tiếp về định nghĩa, số liệu trong luật.
+2. 'Understand': Yêu cầu giải thích ý nghĩa hoặc tóm tắt nội dung điều luật.
+3. 'Apply': Đưa ra tình huống thực tế và hỏi cách áp dụng điều luật này.
+
+CHỈ TRẢ VỀ MỘT TỪ DUY NHẤT: [Remember|Understand|Apply]
+"""
+
 
 # ─────────────────────────────────────────────
 # 4 · Marker-PDF Configuration (Stage 1)
