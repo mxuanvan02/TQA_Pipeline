@@ -152,7 +152,9 @@ class QAGenerator:
 
         from vllm import LLM, SamplingParams
 
-        quantization = "awq" if self.cfg.load_in_4bit else None
+        # Autodetect AWQ: vLLM only supports 'awq' if it is pre-quantized in the repo
+        model_is_awq = "awq" in self.cfg.model_name.lower()
+        quantization = "awq" if model_is_awq else None
         
         self._vllm_engine = LLM(
             model=self.cfg.model_name,

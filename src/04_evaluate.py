@@ -177,7 +177,9 @@ class QAJudge:
 
         from vllm import LLM, SamplingParams
 
-        quantization = "awq" if self.cfg.load_in_4bit else None
+        # Autodetect AWQ: vLLM only supports 'awq' if it is pre-quantized in the repo
+        model_is_awq = "awq" in self.cfg.model_name.lower()
+        quantization = "awq" if model_is_awq else None
         
         self._vllm_engine = LLM(
             model=self.cfg.model_name,
@@ -746,7 +748,78 @@ def run_evaluation(
         paths.dataset_jsonl,
         eval_cfg.batch_size,
     )
+
+    # ── Stage 6: Academic Summary Report ──
+    _print_academic_summary(evaluated, filtered)
+
     return records
+
+
+def _print_academic_summary(evaluated: list[dict[str, Any]], filtered: list[dict[str, Any]]) -> None:
+    """Print a structured report to populate paper tables (Table 1, Table 2)."""
+    if not evaluated:
+        return
+
+    total = len(evaluated)
+    passed = len(filtered)
+    
+    # 1. Main Metrics (Table 1)
+    avg_g = sum(q.get("eval_scores", {}).get("groundedness", 0) for q in evaluated) / total
+    avg_f = sum(q.get("eval_scores", {}).get("legal_fluency", 0) for q in evaluated) / total
+    avg_a = sum(q.get("eval_scores", {}).get("multimodal_alignment", 0) for q in evaluated) / total
+    
+    # 2. Taxonomy Distribution
+    bloom_counts = {"Remember": 0, "Understand": 0, "Apply": 0}
+    for q in evaluated:
+        lvl = q.get("eval_scores", {}).get("taxonomy_level", "Understand")
+        if lvl in bloom_counts:
+            bloom_counts[lvl] += 1
+        else:
+            bloom_counts["Understand"] += 1 # fallback
+
+    # 3. Error Taxonomy (Table 2)
+    rejected = [q for q in evaluated if q not in filtered]
+    error_counts = {
+        "Legal Hallucination": 0,
+        "Visual Misalignment": 0,
+        "Logical Fallacy": 0,
+        "Semantic Overlap": 0,
+        "Other": 0
+    }
+    
+    for q in rejected:
+        scores = q.get("eval_scores", {})
+        just = scores.get("justification", "").lower()
+        
+        if scores.get("groundedness", 1.0) < 1.0:
+            error_counts["Legal Hallucination"] += 1
+        elif scores.get("multimodal_alignment", 1.0) < 1.0:
+            error_counts["Visual Misalignment"] += 1
+        elif scores.get("legal_fluency", 1.0) < 1.0:
+            error_counts["Logical Fallacy"] += 1
+        else:
+            error_counts["Other"] += 1
+
+    print("\n" + "="*60)
+    print("           ACADEMIC SUMMARY REPORT (FOR PAPER)")
+    print("="*60)
+    print(f"Total Evaluated: {total}")
+    print(f"Final Passed:    {passed} ({passed/total*100:.1f}%)")
+    print("-" * 60)
+    print(f"TABLE 1: MAIN METRICS (Averages)")
+    print(f"  - Groundedness:      {avg_g*100:.1f}%")
+    print(f"  - Legal Fluency:     {avg_f*100:.1f}%")
+    print(f"  - MM Alignment:      {avg_a*100:.1f}%")
+    print("-" * 60)
+    print(f"BLOOM TAXONOMY DISTRIBUTION")
+    for k, v in bloom_counts.items():
+        print(f"  - {k:12}: {v:4} ({v/total*100:.1f}%)")
+    print("-" * 60)
+    print(f"TABLE 2: ERROR TAXONOMY (Rejected Samples: {len(rejected)})")
+    if len(rejected) > 0:
+        for k, v in error_counts.items():
+            print(f"  - {k:20}: {v:4} ({v/len(rejected)*100:.1f}%)")
+    print("="*60 + "\n")
 
 
 # ─────────────────────────────────────────────

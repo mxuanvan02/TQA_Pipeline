@@ -134,7 +134,7 @@ class VLMConfig:
 class LLMConfig:
     """Text-only LLM settings (Stage 3 — QAG, Stage 4 — Evaluation)."""
 
-    model_name: str = "Qwen/Qwen2.5-7B-Instruct"  # Changed from 0.5B to 7B for much better quality
+    model_name: str = "Qwen/Qwen2.5-7B-Instruct-AWQ"  # Optimized for vLLM & T4 GPUs
     torch_dtype: str = "bfloat16"
     load_in_4bit: bool = True
     use_vllm: bool = True             # Primary offline inference engine
@@ -438,7 +438,7 @@ class GPUOptConfig:
     enable_vlm_batch: bool = True      # attempt batched VLM inference (fallback if fail)
 
     # vLLM optimization
-    vllm_gpu_utilization: float = 0.90 # % VRAM reserved for vLLM KV cache
+    vllm_gpu_utilization: float = 0.85 # Slight reduction to improve stability on T4 (16GB)
     vllm_max_num_seqs: int = 1024      # Max concurrent sequences (pushes GPU scheduler to 100%)
     async_drive_io: bool = True        # run checkpointing in background threads
 
