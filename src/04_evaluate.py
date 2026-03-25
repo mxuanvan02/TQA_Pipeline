@@ -253,9 +253,11 @@ class QAJudge:
             rationale=qa.get("legal_rationale", ""),
         )
 
+        # Merge system prompt into user message to ensure compliance with models 
+        # that don't support the 'system' role (e.g., Gemma-2, Phi-3).
+        full_user_content = f"{JUDGE_SYSTEM_PROMPT}\n\n{user_prompt}"
         messages = [
-            {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
+            {"role": "user", "content": full_user_content},
         ]
 
         return self._tokenizer.apply_chat_template(
