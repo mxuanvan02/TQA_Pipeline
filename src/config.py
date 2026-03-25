@@ -194,7 +194,7 @@ class QAGConfig:
         "Apply",         # Level 3 — apply to new scenario
     )
     questions_per_level: int = 1      # per chunk, per Bloom level
-    batch_size: int = 32              # Reduced for T4 GPU (16GB VRAM)
+    batch_size: int = 64              # Tối ưu hóa cho NVIDIA L4 GPU (24GB VRAM)
     merge_bloom_levels: bool = True   # merge all bloom levels into one GPU call (3× speedup)
 
 
@@ -244,7 +244,7 @@ class EvalConfig:
     legal_fluency_threshold: float = 1.0        # Syllogism: Major→Minor→Conclusion must be valid
     overall_threshold: float = 1.0              # Composite: all criteria must pass
     score_scale: int = 1                        # Binary (0/1) — see [Paper Note] §4.1
-    batch_size: int = 32                        # Reduced for T4 GPU (16GB VRAM)
+    batch_size: int = 64                        # Tối ưu hóa cho NVIDIA L4 GPU (24GB VRAM)
 
     # --- Augmented Evaluation Prompts ---
     # [Paper Note] §5.2: "To ensure granular quality control, we supplement the binary
@@ -289,7 +289,7 @@ class MarkerConfig:
     paginate_output: bool = True
     output_format: str = "markdown"
     batch_multiplier: int = 12        # marker batch multiplier (L4 optimized — higher fills VRAM)
-    parallel_workers: int = 2          # concurrent PDF processes (2×7GB ≈ 14GB on L4)
+    parallel_workers: int = 3          # L4 có ~24GB VRAM, 3 workers (3x7=21GB) là mức tối đa an toàn. Không nên lên 4.
 
     # Explicit surya batch sizes (override auto-detection for L4 GPU)
     # These are set as env vars BEFORE surya imports
@@ -438,7 +438,7 @@ class GPUOptConfig:
     enable_vlm_batch: bool = True      # attempt batched VLM inference (fallback if fail)
 
     # vLLM optimization
-    vllm_gpu_utilization: float = 0.85 # Slight reduction to improve stability on T4 (16GB)
+    vllm_gpu_utilization: float = 0.90 # NVIDIA L4 có 24GB VRAM, 0.90 đảm bảo tận dụng tối đa mà không bị OOM hệ thống
     vllm_max_num_seqs: int = 1024      # Max concurrent sequences (pushes GPU scheduler to 100%)
     async_drive_io: bool = True        # run checkpointing in background threads
 
