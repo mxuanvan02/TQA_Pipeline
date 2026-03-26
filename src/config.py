@@ -38,20 +38,20 @@ class PathConfig:
     """Immutable directory layout for the entire pipeline."""
 
     root: Path = field(
-        default_factory=lambda: Path(os.environ.get("TQA_ROOT", "/content/TQA_Pipeline"))
+        default_factory=lambda: Path(os.environ.get("TQA_ROOT", str(Path(__file__).resolve().parent.parent)))
     )
 
     # Data directories (auto-resolved in __post_init__)
-    raw: Path = field(default=Path("/content/TQA_Pipeline/data/raw"))
-    interim: Path = field(default=Path("/content/TQA_Pipeline/data/interim"))
-    processed: Path = field(default=Path("/content/TQA_Pipeline/data/processed"))
+    raw: Path = field(default=Path("data/raw"))
+    interim: Path = field(default=Path("data/interim"))
+    processed: Path = field(default=Path("data/processed"))
 
     # Interim sub-paths (auto-resolved in __post_init__)
-    interim_images: Path = field(default=Path("/content/TQA_Pipeline/data/interim/images"))
-    multimodal_contexts: Path = field(default=Path("/content/TQA_Pipeline/data/interim/multimodal_contexts.json"))
-    raw_qa_pairs: Path = field(default=Path("/content/TQA_Pipeline/data/interim/raw_qa_pairs.json"))
-    filtered_qa_pairs: Path = field(default=Path("/content/TQA_Pipeline/data/interim/filtered_qa_pairs.json"))
-    dataset_jsonl: Path = field(default=Path("/content/TQA_Pipeline/data/processed/dataset.jsonl"))
+    interim_images: Path = field(default=Path("data/interim/images"))
+    multimodal_contexts: Path = field(default=Path("data/interim/multimodal_contexts.json"))
+    raw_qa_pairs: Path = field(default=Path("data/interim/raw_qa_pairs.json"))
+    filtered_qa_pairs: Path = field(default=Path("data/interim/filtered_qa_pairs.json"))
+    dataset_jsonl: Path = field(default=Path("data/processed/dataset.jsonl"))
 
     def __post_init__(self) -> None:
         root = Path(os.environ.get("TQA_ROOT", str(self.root))).expanduser()
@@ -318,24 +318,24 @@ class DriveBackupConfig:
         default_factory=lambda: Path(os.environ.get("TQA_DRIVE_ROOT", "/content/drive/MyDrive"))
     )
     backup_base: Path = field(
-        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup_7B")
+        default=Path("Colab_Workspaces/TQA_Pipeline_Backup_7B")
     )
 
     # Stage 1 — Digitization (auto-resolved in __post_init__)
-    interim_md: Path = field(default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim"))
-    interim_images: Path = field(default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/images"))
+    interim_md: Path = field(default=Path("interim"))
+    interim_images: Path = field(default=Path("interim/images"))
 
     # Stage 2 — Structuring (auto-resolved in __post_init__)
-    contexts_dir: Path = field(default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/contexts"))
+    contexts_dir: Path = field(default=Path("interim/contexts"))
 
     # Stage 3 — QAG (auto-resolved in __post_init__)
-    qa_chunks_dir: Path = field(default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/qa_chunks"))
+    qa_chunks_dir: Path = field(default=Path("interim/qa_chunks"))
 
     # Stage 4 — Evaluation (auto-resolved in __post_init__)
-    evaluated_qa_dir: Path = field(default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/evaluated_qa"))
+    evaluated_qa_dir: Path = field(default=Path("interim/evaluated_qa"))
 
     # Final outputs (auto-resolved in __post_init__)
-    processed_dir: Path = field(default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/processed"))
+    processed_dir: Path = field(default=Path("processed"))
 
     def __post_init__(self) -> None:
         drive_root = Path(os.environ.get("TQA_DRIVE_ROOT", str(self.drive_root))).expanduser()
