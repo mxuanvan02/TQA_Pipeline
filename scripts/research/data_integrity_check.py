@@ -7,13 +7,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from mcq_utils import resolve_ground_truth_index
 
 REQUIRED_QA_KEYS = {
     "qa_id",
-    "doc_id",
     "bloom_level",
     "question_content",
     "candidate_answers",
@@ -53,11 +58,16 @@ def _check_records(records: list[dict]) -> dict:
         "missing_required_fields": 0,
         "empty_question": 0,
         "invalid_candidate_answers": 0,
+        "non_four_way_candidate_answers": 0,
         "duplicate_qa_id": 0,
         "duplicate_question_ground_truth": 0,
     }
     qa_ids = Counter()
     sigs = Counter()
+    candidate_count_dist = Counter()
+    gt_match_methods = Counter()
+    gt_position_dist = Counter()
+    unresolved_examples: list[dict] = []
 
     for r in records:
         missing = REQUIRED_QA_KEYS - set(r.keys())
@@ -68,6 +78,10 @@ def _check_records(records: list[dict]) -> dict:
         ca = r.get("candidate_answers", [])
         if not isinstance(ca, list) or len(ca) < 2:
             issues["invalid_candidate_answers"] += 1
+        if isinstance(ca, list):
+            candidate_count_dist[len(ca)] += 1
+            if len(ca) != 4:
+                issues["non_four_way_candidate_answers"] += 1
         qa_ids[str(r.get("qa_id", ""))] += 1
 
         sig = (
@@ -76,9 +90,30 @@ def _check_records(records: list[dict]) -> dict:
         )
         sigs[sig] += 1
 
+        gt_resolution = resolve_ground_truth_index(ca, str(r.get("ground_truth", "")))
+        gt_match_methods[gt_resolution["method"]] += 1
+        matched_index = gt_resolution["matched_index"]
+        if matched_index is not None and 0 <= matched_index <= 3 and len(ca) == 4:
+            gt_position_dist[chr(65 + matched_index)] += 1
+        elif len(unresolved_examples) < 10:
+            unresolved_examples.append(
+                {
+                    "qa_id": str(r.get("qa_id", "")),
+                    "method": gt_resolution["method"],
+                    "candidate_count": gt_resolution["candidate_count"],
+                }
+            )
+
     issues["duplicate_qa_id"] = sum(v - 1 for v in qa_ids.values() if v > 1)
     issues["duplicate_question_ground_truth"] = sum(v - 1 for v in sigs.values() if v > 1)
-    return issues
+    return {
+        **issues,
+        "candidate_answer_count_distribution": dict(sorted(candidate_count_dist.items())),
+        "ground_truth_match_methods": dict(gt_match_methods),
+        "evaluable_four_way_count": sum(gt_position_dist.values()),
+        "ground_truth_position_distribution": dict(gt_position_dist),
+        "unresolved_examples_head": unresolved_examples,
+    }
 
 
 def _check_split_leakage(records: list[dict], manifest_path: Path | None) -> dict:
@@ -130,4 +165,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
