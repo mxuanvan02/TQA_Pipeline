@@ -11,6 +11,8 @@ data/*
 data/output/*
 !data/output/processed/
 !data/output/processed/**
+data/output/processed/dataset.jsonl
+data/output/processed/dataset_eval_ready.jsonl
 data/raw/
 data/output/raw/
 data/output/interim/
