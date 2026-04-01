@@ -120,30 +120,46 @@ class PathConfig:
 class VLMConfig:
     """Vision-Language Model settings (Stage 2 — image description)."""
 
-    model_name: str = "5CD-AI/Vintern-1B-v3_5"  # Best lightweight VLM for Vietnamese
-    # Fallback: "Qwen/Qwen2-VL-2B-Instruct"
+    model_name: str = "5CD-AI/Vintern-1B-v3_5"
     torch_dtype: str = "float16"
     load_in_4bit: bool = True
     max_new_tokens: int = 512
     temperature: float = 0.3
     device_map: str = "auto"
-    batch_size: int = 16             # images per VLM batch (L4: true batched inference)
+    batch_size: int = 16
 
 
 @dataclass(frozen=True)
 class LLMConfig:
     """Text-only LLM settings (Stage 3 — QAG, Stage 4 — Evaluation)."""
 
-    model_name: str = "Qwen/Qwen2.5-7B-Instruct-AWQ"  # Optimized for vLLM & T4 GPUs
+    model_name: str = "Qwen/Qwen2.5-7B-Instruct-AWQ"
     torch_dtype: str = "bfloat16"
     load_in_4bit: bool = True
-    use_vllm: bool = True             # Primary offline inference engine
-    max_new_tokens: int = 512         # Reduced from 1024 for faster generation
-    temperature: float = 0.7          # for creative QA generation
-    eval_temperature: float = 0.1     # deterministic evaluation
+    use_vllm: bool = True
+    max_new_tokens: int = 512
+    temperature: float = 0.7
+    eval_temperature: float = 0.1
     top_p: float = 0.9
     device_map: str = "auto"
     repetition_penalty: float = 1.15
+
+
+@dataclass(frozen=True)
+class BenchmarkConfig:
+    """Settings for external benchmark model APIs (OpenAI-compatible)."""
+
+    model_name: str = field(
+        default_factory=lambda: os.environ.get("BENCHMARK_MODEL_NAME", "openai/gpt-oss-20b")
+    )
+    api_base: str = field(
+        default_factory=lambda: os.environ.get("BENCHMARK_API_BASE", "http://10.9.5.18:1234/v1")
+    )
+    api_key: str = field(
+        default_factory=lambda: os.environ.get("BENCHMARK_API_KEY", "sk-tqa-benchmark-2026-v1")
+    )
+    max_tokens: int = 16
+    temperature: float = 0.0
 
 
 # ─────────────────────────────────────────────
@@ -202,53 +218,18 @@ class QAGConfig:
 class EvalConfig:
     """
     LLM-as-a-judge binary scoring (Stage 4).
-
-    # [Paper Note — Judge Model Design Choice]
-    # To mitigate *same-family bias* (where a judge from the same model
-    # family as the generator tends to over-approve generated outputs due
-    # to shared pre-training data and alignment methodology), we deliberately
-    # select a judge from a DIFFERENT model family than the generator.
-    #
-    # Generator : Qwen/Qwen2.5-0.5B-Instruct  (Alibaba Cloud / Qwen family)
-    # Judge      : google/gemma-2-2b-it         (Google / Gemma family)
-    #
-    # Rationale for gemma-2-2b-it in LOW-RESOURCE setting:
-    #   - 2B parameters → fits on Colab T4/L4 even with 4-bit quantisation
-    #   - Supported by BitsAndBytes 4-bit (NF4) → ~1.0 GB VRAM footprint
-    #   - Multilingual pre-training includes Vietnamese text
-    #   - Open weights, no API key required (reproducible research)
-    #   - DIFFERENT architecture family from Qwen → reduces self-reinforcement
-    #
-    # Alternative lightweight cross-family judges (if gemma-2 unavailable):
-    #   - microsoft/Phi-3-mini-4k-instruct (3.8B, Microsoft family)
-    #   - meta-llama/Llama-3.2-3B-Instruct (3B, Meta family — needs HF token)
-    #
-    # Cross-model validation (for paper ablation):
-    #   Run evaluate.py with --model-name <cross_validation_model_name>
-    #   to verify score distributions are consistent across judge families.
     """
 
-    # Judge from a different model family than the generator (anti-bias design).
-    # [Paper Note] Cited in §4 Quality Analysis as cross-family judge strategy.
     judge_model_name: str = "google/gemma-2-2b-it"
-
-    # Fallback judge if gemma-2 download fails (same-size, different family).
-    # Usage: python -m src.04_evaluate --model-name microsoft/Phi-3-mini-4k-instruct
     fallback_judge_model_name: str = "microsoft/Phi-3-mini-4k-instruct"
 
-    # Binary pass/fail thresholds (scale: 0 = Fail, 1 = Pass).
-    # [Paper Note] §4.1: "A QA pair is retained if and only if all three
-    # criteria receive a binary Pass score from the cross-family judge."
-    groundedness_threshold: float = 1.0         # Context grounding: must be fully supported
-    multimodal_alignment_threshold: float = 1.0 # Visual reference: must correctly cite visuals
-    legal_fluency_threshold: float = 1.0        # Syllogism: Major→Minor→Conclusion must be valid
-    overall_threshold: float = 1.0              # Composite: all criteria must pass
-    score_scale: int = 1                        # Binary (0/1) — see [Paper Note] §4.1
-    batch_size: int = 64                        # Tối ưu hóa cho NVIDIA L4 GPU (24GB VRAM)
+    groundedness_threshold: float = 1.0
+    multimodal_alignment_threshold: float = 1.0
+    legal_fluency_threshold: float = 1.0
+    overall_threshold: float = 1.0
+    score_scale: int = 1
+    batch_size: int = 64
 
-    # --- Augmented Evaluation Prompts ---
-    # [Paper Note] §5.2: "To ensure granular quality control, we supplement the binary
-    # pass/fail scoring with secondary checks for Legal Grounding and Bloom Taxonomy classification."
     legal_grounding_template: str = """
 [Bối cảnh pháp lý]: {context}
 [Câu hỏi]: {question}
@@ -408,13 +389,10 @@ class DriveBackupConfig:
 # ─────────────────────────────────────────────
 @dataclass(frozen=True)
 class GPUOptConfig:
-    """GPU optimization settings tuned for NVIDIA L4 (22.5 GB VRAM).
+    """GPU optimization settings.
 
     Who:    All pipeline stages.
     How:    Controls batch sizes, data prefetching, and memory management.
-    Why:    4-bit quantized models (Vintern-1B ~700MB, Qwen-0.5B ~400MB)
-            leave >20 GB VRAM free. Batching fills the GPU pipeline,
-            raising utilization from ~5% to 60-80%.
     """
 
     # Data loading
@@ -426,21 +404,18 @@ class GPUOptConfig:
     empty_cache_interval: int = 50     # torch.cuda.empty_cache() every N batches
     log_gpu_interval: int = 10         # log VRAM usage every N batches
 
-    # torch.compile for text LLMs (Qwen — ~20-40% inference speedup)
-    use_torch_compile: bool = True     # enable for Qwen2.5 on PyTorch 2.x
-    compile_mode: str = "reduce-overhead"  # "default", "reduce-overhead", "max-autotune"
+    use_torch_compile: bool = True
+    compile_mode: str = "reduce-overhead"
 
     # torch.backends optimizations for inference
     cudnn_benchmark: bool = True       # auto-tune convolution algorithms
     matmul_precision: str = "medium"   # trade precision for speed (float32 matmul)
 
-    # VLM batching (InternVL2/Vintern models)
-    enable_vlm_batch: bool = True      # attempt batched VLM inference (fallback if fail)
+    enable_vlm_batch: bool = True
 
-    # vLLM optimization
-    vllm_gpu_utilization: float = 0.90 # NVIDIA L4 có 24GB VRAM, 0.90 đảm bảo tận dụng tối đa mà không bị OOM hệ thống
-    vllm_max_num_seqs: int = 1024      # Max concurrent sequences (pushes GPU scheduler to 100%)
-    async_drive_io: bool = True        # run checkpointing in background threads
+    vllm_gpu_utilization: float = 0.90
+    vllm_max_num_seqs: int = 1024
+    async_drive_io: bool = True
 
 
 # ─────────────────────────────────────────────
@@ -460,7 +435,7 @@ class TQARecord(BaseModel):
     """Final JSONL schema definition — one record per QA pair."""
 
     qa_id: str = Field(..., description="Unique identifier: <doc>_<chunk>_<bloom>_<seq>")
-    domain_tag: str = Field(default="civil_law", description="Subject domain")
+    domain_tag: str = Field(default="unknown", description="Subject domain or inferred source-textbook group")
     bloom_level: str = Field(default="", description="Bloom's Taxonomy level: Remember/Understand/Apply")
     context_payload: ContextPayload
     question_content: str
@@ -496,6 +471,7 @@ class PipelineConfig:
     marker: MarkerConfig = field(default_factory=MarkerConfig)
     drive_backup: DriveBackupConfig = field(default_factory=DriveBackupConfig)
     gpu: GPUOptConfig = field(default_factory=GPUOptConfig)
+    benchmark: BenchmarkConfig = field(default_factory=BenchmarkConfig)
 
 
 # Instantiate the global config

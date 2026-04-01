@@ -190,6 +190,9 @@ def build_eval_ready(records: list[dict], seed: int, manifest_map: dict[str, dic
         doc_id, chunk_id = _parse_qa_id(str(record.get("qa_id", "")))
         manifest_row = manifest_map.get(chunk_id, {})
         split = str(manifest_row.get("split", "")).strip() or str(record.get("split", "")).strip() or "unknown"
+        inferred_domain = _infer_domain(record)
+        domain_tag = str(record.get("domain_tag", "")).strip() or "unknown"
+        domain_tag_source = "metadata" if domain_tag not in {"civil_law", "unknown", "Unknown"} else "inferred_from_qa_id"
 
         row = dict(record)
         row["candidate_answers_raw"] = raw_candidates
@@ -201,6 +204,8 @@ def build_eval_ready(records: list[dict], seed: int, manifest_map: dict[str, dic
         row["doc_id"] = str(manifest_row.get("doc_id", "")).strip() or doc_id
         row["chunk_id"] = chunk_id
         row["split"] = split
+        row["source_domain_group"] = inferred_domain
+        row["domain_tag_source"] = domain_tag_source
         row["eval_ready"] = True
         row["eval_ready_meta"] = {
             "source_match_method": resolution["method"],
@@ -214,7 +219,7 @@ def build_eval_ready(records: list[dict], seed: int, manifest_map: dict[str, dic
         by_bloom[bloom]["total"] += 1
         if bool(record.get("is_multimodal", False)):
             by_bloom[bloom]["multimodal"] += 1
-        by_domain[_infer_domain(record)] += 1
+        by_domain[inferred_domain] += 1
         by_split[split] += 1
 
     report = {
@@ -228,6 +233,7 @@ def build_eval_ready(records: list[dict], seed: int, manifest_map: dict[str, dic
         "by_split": dict(by_split),
         "by_bloom": {k: v for k, v in sorted(by_bloom.items())},
         "top_domains": dict(by_domain.most_common(10)),
+        "top_domains_note": "Derived from qa_id/doc_id when release domain_tag is placeholder-valued.",
     }
     return cleaned_rows, report
 

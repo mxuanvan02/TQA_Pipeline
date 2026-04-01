@@ -1,20 +1,14 @@
 """
 Stage 3 — Synthetic Question-Answer Generation (QAG)
 =====================================================
-Who:    Qwen2.5-0.5B-Instruct (or 1.5B) loaded in 4-bit.
+Who:    The configured Stage-3 text generator.
 Where:  Reads data/interim/multimodal_contexts.json
         Writes data/interim/raw_qa_pairs.json
 How:    For each context chunk, prompts the LLM to generate QA pairs at
         three Bloom's Taxonomy levels using Legal Syllogism reasoning.
-        Uses BATCHED inference to maximize GPU L4 utilization.
+        Uses batched inference for throughput.
 Input:  multimodal_contexts.json (list of chunk records from Stage 2).
 Output: raw_qa_pairs.json (list of QA records with rationale).
-
-GPU Optimization (L4 — 22.5 GB VRAM):
-    - 4-bit Qwen-0.5B uses ~400 MB VRAM → massive headroom for batching
-    - Batch size 16: tokenize + generate 16 prompts simultaneously
-    - Left-padding for causal LM batched generation
-    - ThreadPool prefetch for I/O-bound prompt preparation
 """
 
 from __future__ import annotations
@@ -33,6 +27,8 @@ import torch
 from tqdm import tqdm
 
 from src.config import CFG, DriveBackupConfig, GPUOptConfig, LLMConfig, PathConfig, QAGConfig
+from src.domain_tags import infer_domain_tag_from_record
+from src.language_sanity import qa_artifact_reasons, sanitize_generated_text
 from src.utils import (
     AsyncDriveWriter,
     batched,
@@ -83,6 +79,9 @@ at the Bloom's Taxonomy level: **{bloom_level}**.
    - **Minor Premise**: The specific facts of the question scenario.
    - **Conclusion**: The logical deduction from the premises.
 4. Questions and answers must be in Vietnamese.
+5. Do NOT use English or Chinese in any field.
+6. Do NOT copy the instructions, XML examples, or meta commentary into the answer.
+7. Do NOT append notes such as "(full correct answer text)".
 
 ## Output Format (strict XML tags):
 For each question, wrap the output EXACTLY like this:
@@ -95,7 +94,7 @@ B. ...
 C. ...
 D. ...
 </candidate_answers>
-<ground_truth>A. ... (full correct answer text)</ground_truth>
+<ground_truth>A. ...</ground_truth>
 <legal_rationale>Đại tiền đề: ... Tiểu tiền đề: ... Kết luận: ...</legal_rationale>
 </qa_pair>
 
@@ -285,7 +284,6 @@ class QAGenerator:
         GPU Optimization:
             - Tokenizes all prompts together with padding
             - Runs model.generate() once for the entire batch
-            - L4 with 4-bit Qwen-0.5B can handle batch_size=16-32 easily
         """
         self._load()
 
@@ -438,7 +436,7 @@ def _parse_qa_xml(text: str) -> list[dict[str, Any]]:
     Extract QA pairs from LLM XML output via Regex.
 
     How:  Finds all <qa_pair> blocks and extracts nested tags.
-          More stable than JSON parsing for 0.5B models.
+          More stable than JSON parsing for the current prompt format.
     """
     pairs: list[dict[str, Any]] = []
 
@@ -465,11 +463,20 @@ def _parse_qa_xml(text: str) -> list[dict[str, Any]]:
             if len(candidates) < 2:
                 candidates = lines
 
+            question = sanitize_generated_text(q_match.group(1))
+            candidates = [sanitize_generated_text(x) for x in candidates]
+            ground_truth = sanitize_generated_text(gt_match.group(1))
+            legal_rationale = sanitize_generated_text(lr_match.group(1))
+            artifact_reasons = qa_artifact_reasons(question, candidates, ground_truth, legal_rationale)
+            if artifact_reasons:
+                log.debug("  Dropped QA pair with foreign/prompt artifacts: %s", ", ".join(artifact_reasons))
+                continue
+
             pairs.append({
-                "question": q_match.group(1).strip(),
+                "question": question,
                 "candidate_answers": candidates,
-                "ground_truth": gt_match.group(1).strip(),
-                "legal_rationale": lr_match.group(1).strip(),
+                "ground_truth": ground_truth,
+                "legal_rationale": legal_rationale,
             })
 
     if not pairs:
@@ -501,9 +508,9 @@ def run_qag(
     Output: raw_qa_pairs.json — enriched QA records.
 
     GPU Optimization:
-        - Processes contexts in batches of qag_cfg.batch_size (default 16)
+        - Processes contexts in batches of qag_cfg.batch_size
         - Each batch generates for one Bloom level at a time
-        - Drive checkpointing per-chunk (survives Colab disconnects)
+        - Optional checkpointing can persist intermediate progress
     """
     paths = paths or CFG.paths
     llm_cfg = llm_cfg or CFG.llm
@@ -612,11 +619,14 @@ def run_qag(
 
                             for i, qa in enumerate(qa_list):
                                 qa_id = f"{chunk_id}_{bloom_level.lower()}_{i}"
+                                domain_tag = infer_domain_tag_from_record(
+                                    {"doc_id": doc_id, "chunk_id": chunk_id, "qa_id": qa_id}
+                                )
                                 enriched = {
                                     "qa_id": qa_id,
                                     "doc_id": doc_id,
                                     "chunk_id": chunk_id,
-                                    "domain_tag": "civil_law",
+                                    "domain_tag": domain_tag,
                                     "bloom_level": bloom_level,
                                     "context_text": ctx.get("text", ""),
                                     "context_visuals": ctx.get("image_paths", []),
@@ -672,11 +682,14 @@ def run_qag(
 
                                 for i, qa in enumerate(qa_list):
                                     qa_id = f"{chunk_id}_{bloom_level.lower()}_{i}"
+                                    domain_tag = infer_domain_tag_from_record(
+                                        {"doc_id": doc_id, "chunk_id": chunk_id, "qa_id": qa_id}
+                                    )
                                     enriched = {
                                         "qa_id": qa_id,
                                         "doc_id": doc_id,
                                         "chunk_id": chunk_id,
-                                        "domain_tag": "civil_law",
+                                        "domain_tag": domain_tag,
                                         "bloom_level": bloom_level,
                                         "context_text": ctx.get("text", ""),
                                         "context_visuals": ctx.get("image_paths", []),
@@ -704,9 +717,12 @@ def run_qag(
                             doc_id = ctx.get("doc_id", "unknown")
                             for i, qa in enumerate(qa_list):
                                 qa_id = f"{chunk_id}_{bloom_level.lower()}_{i}"
+                                domain_tag = infer_domain_tag_from_record(
+                                    {"doc_id": doc_id, "chunk_id": chunk_id, "qa_id": qa_id}
+                                )
                                 enriched = {
                                     "qa_id": qa_id, "doc_id": doc_id,
-                                    "chunk_id": chunk_id, "domain_tag": "civil_law",
+                                    "chunk_id": chunk_id, "domain_tag": domain_tag,
                                     "bloom_level": bloom_level,
                                     "context_text": ctx.get("text", ""),
                                     "context_visuals": ctx.get("image_paths", []),
@@ -732,9 +748,12 @@ def run_qag(
                     doc_id = ctx.get("doc_id", "unknown")
                     for i, qa in enumerate(qa_list):
                         qa_id = f"{chunk_id}_{bloom_level.lower()}_{i}"
+                        domain_tag = infer_domain_tag_from_record(
+                            {"doc_id": doc_id, "chunk_id": chunk_id, "qa_id": qa_id}
+                        )
                         enriched = {
                             "qa_id": qa_id, "doc_id": doc_id,
-                            "chunk_id": chunk_id, "domain_tag": "civil_law",
+                            "chunk_id": chunk_id, "domain_tag": domain_tag,
                             "bloom_level": bloom_level,
                             "context_text": ctx.get("text", ""),
                             "context_visuals": ctx.get("image_paths", []),

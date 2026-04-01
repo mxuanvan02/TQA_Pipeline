@@ -4,7 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-DATASET="${1:-data/output/processed/dataset_eval_ready.jsonl}"
+DEFAULT_DATASET="data/output/processed/dataset_eval_ready.clean.jsonl"
+if [[ ! -f "$DEFAULT_DATASET" ]]; then
+  DEFAULT_DATASET="data/output/processed/dataset_eval_ready.jsonl"
+fi
+DATASET="${1:-$DEFAULT_DATASET}"
 MODEL="${2:-Qwen/Qwen2.5-7B-Instruct-AWQ}"
 OUT_DIR="${3:-research/results/benchmarks}"
 SPLIT="${4:-test}"

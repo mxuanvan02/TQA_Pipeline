@@ -1,44 +1,60 @@
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Data policy:
-# - Keep only dataset artifacts (processed) in git.
-# - Never push raw inputs.
-data/*
-!data/output/
-data/output/*
-!data/output/processed/
-!data/output/processed/**
-data/output/processed/dataset.jsonl
-data/output/processed/dataset_eval_ready.jsonl
-data/raw/
-data/output/raw/
-data/output/interim/
-TQA_Pipeline/data/
-
-# Paper/research writing artifacts (exclude only top-level research dir)
-/research/
-*.tex
-*.md
-*.docx
-
-# Environments
+# Virtual environments and local secrets
 .env
-.venv
+!.env_example
+.venv/
 env/
 venv/
 ENV/
 
-# OS generated files
+# OS / editor junk
 .DS_Store
 .DS_Store?
 ._*
 .Spotlight-V100
 .Trashes
-ehthumbs.db
 Thumbs.db
+ehthumbs.db
+.vscode/
 
-
+# Local temporary files
 temp/
+tmp/
+BRAIN.md
+
+# Raw and intermediate pipeline data
+data/
+data/raw/
+data/TQA_Pipeline_Backup*/
+data/TQA_Pipeline_Backup-*.zip
+data/output/raw/
+data/output/interim/
+
+# Generated processed datasets and derived assets
+data/output/processed/
+
+# Generated research artifacts / benchmark outputs
+research/
+research/artifacts/
+research/results/
+research/human_eval/
+
+# Paper build artifacts
+research/paper/*.aux
+research/paper/*.bbl
+research/paper/*.bcf
+research/paper/*.blg
+research/paper/*.fdb_latexmk
+research/paper/*.fls
+research/paper/*.log
+research/paper/*.out
+research/paper/*.pdf
+research/paper/*.run.xml
+research/paper/*.synctex.gz
+research/paper/*.xdv
+research/paper.zip
+research/paper/figures/*.pdf

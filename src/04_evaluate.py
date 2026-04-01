@@ -1,7 +1,7 @@
 """
 Stage 4 — Evaluation (LLM-as-a-Judge) + Stage 5 Final Output
 ==============================================================
-Who:    Qwen2.5-0.5B-Instruct (same LLM, strict judge system prompt).
+Who:    The configured Stage-4 judge model.
 Where:  Reads data/interim/raw_qa_pairs.json
         Writes data/interim/filtered_qa_pairs.json (Stage 4)
         Writes data/processed/dataset.jsonl       (Stage 5)
@@ -11,11 +11,6 @@ How:    1. Score each QA pair on Groundedness, Multimodal Alignment,
         3. Format surviving records into the TQARecord JSONL schema.
 Input:  raw_qa_pairs.json (from Stage 3).
 Output: filtered_qa_pairs.json + dataset.jsonl.
-
-GPU Optimization (L4 — 22.5 GB VRAM):
-    - Batched evaluation: 32 QA pairs per batch (short 256-token output)
-    - Left-padding for causal LM batch generation
-    - Drive checkpointing per-batch for Colab resilience
 """
 
 from __future__ import annotations
@@ -43,6 +38,7 @@ from src.config import (
     PathConfig,
     TQARecord,
 )
+from src.domain_tags import infer_domain_tag_from_record
 from src.utils import (
     AsyncDriveWriter,
     batched,
@@ -550,7 +546,7 @@ def format_to_tqa_records(
         try:
             record = TQARecord(
                 qa_id=qa.get("qa_id", ""),
-                domain_tag=qa.get("domain_tag", "civil_law"),
+                domain_tag=infer_domain_tag_from_record(qa),
                 bloom_level=qa.get("bloom_level", ""),
                 context_payload=ContextPayload(
                     text=qa.get("context_text", ""),

@@ -21,13 +21,15 @@ def _load_json(path: Path):
         return json.load(f)
 
 
-def _collect_qa(raw_qa_path: Path, qa_chunks_dir: Path | None) -> list[dict]:
+def _collect_qa(raw_qa_path: Path, qa_chunks_dir: Path | None) -> tuple[list[dict], str]:
     records: list[dict] = []
 
     if raw_qa_path.exists():
         data = _load_json(raw_qa_path)
         if isinstance(data, list):
             records.extend(x for x in data if isinstance(x, dict))
+        if records:
+            return records, "raw_qa_pairs"
 
     if qa_chunks_dir and qa_chunks_dir.exists():
         for p in sorted(qa_chunks_dir.glob("*.json")):
@@ -39,7 +41,10 @@ def _collect_qa(raw_qa_path: Path, qa_chunks_dir: Path | None) -> list[dict]:
                     records.append(data)
             except Exception:
                 continue
-    return records
+        if records:
+            return records, "qa_chunks_fallback"
+
+    return records, "none"
 
 
 def _norm_text(s: str) -> str:
@@ -55,6 +60,11 @@ def _gate_report(
 ) -> dict:
     raw_pdfs = list(raw_dir.glob("*.pdf")) + list(raw_dir.glob("*.PDF"))
     md_files = list(interim_dir.glob("*.md"))
+    raw_pdf_stems = {p.stem for p in raw_pdfs}
+    md_stems = {p.stem for p in md_files}
+    matched_md_stems = raw_pdf_stems & md_stems
+    extra_md_stems = md_stems - raw_pdf_stems
+    missing_md_stems = raw_pdf_stems - md_stems
 
     contexts = _load_json(contexts_path) if contexts_path.exists() else []
     if not isinstance(contexts, list):
@@ -67,7 +77,7 @@ def _gate_report(
         if str(c.get("doc_id", "")).strip() and str(c.get("chunk_id", "")).strip() and str(c.get("text", "")).strip():
             valid_contexts += 1
 
-    qas = _collect_qa(raw_qa_path, qa_chunks_dir)
+    qas, qa_source = _collect_qa(raw_qa_path, qa_chunks_dir)
     required = {"qa_id", "question_content", "candidate_answers", "ground_truth", "legal_rationale"}
     valid_qas = 0
     uniq = set()
@@ -81,7 +91,7 @@ def _gate_report(
         else:
             uniq.add(sig)
 
-    gate_a_coverage = (len(md_files) / len(raw_pdfs)) if raw_pdfs else 0.0
+    gate_a_coverage = (len(matched_md_stems) / len(raw_pdf_stems)) if raw_pdf_stems else 0.0
     gate_b_valid_context_ratio = (valid_contexts / len(contexts)) if contexts else 0.0
     gate_c_parse_valid_qa_ratio = (valid_qas / len(qas)) if qas else 0.0
     gate_d_duplicate_qa_rate = (dup / len(qas)) if qas else 0.0
@@ -90,17 +100,25 @@ def _gate_report(
         "counts": {
             "raw_pdfs": len(raw_pdfs),
             "interim_markdown_docs": len(md_files),
+            "matched_markdown_docs": len(matched_md_stems),
+            "extra_markdown_docs": len(extra_md_stems),
+            "missing_markdown_docs": len(missing_md_stems),
             "contexts_total": len(contexts),
             "contexts_valid": valid_contexts,
             "qa_total": len(qas),
             "qa_valid": valid_qas,
             "qa_duplicates": dup,
+            "qa_source": qa_source,
         },
         "gates": {
             "gate_a_ocr_chunk_coverage": gate_a_coverage,
             "gate_b_valid_context_ratio": gate_b_valid_context_ratio,
             "gate_c_parse_valid_qa_ratio": gate_c_parse_valid_qa_ratio,
             "gate_d_duplicate_qa_rate": gate_d_duplicate_qa_rate,
+        },
+        "diagnostics": {
+            "extra_markdown_doc_stems": sorted(extra_md_stems),
+            "missing_markdown_doc_stems": sorted(missing_md_stems),
         },
     }
 
@@ -133,4 +151,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

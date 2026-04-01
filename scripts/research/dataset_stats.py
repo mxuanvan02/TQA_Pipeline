@@ -119,6 +119,10 @@ def _infer_domain(qa: dict) -> str:
     m = re.match(r"^(\d+)", doc_id)
     if m:
         return _DOMAIN_MAP.get(m.group(1), "Other")
+    qa_id = str(qa.get("qa_id", ""))
+    m = re.match(r"^(\d+)", qa_id)
+    if m:
+        return _DOMAIN_MAP.get(m.group(1), "Other")
     # Fallback: use context filename if present
     ctx = str(qa.get("context_text", ""))[:60]
     return "Other"
@@ -155,8 +159,8 @@ def analyze(raw_path: Path, filtered_path: Path, dataset_path: Path) -> dict:
     ctx_lengths: list[int] = []
     ans_counts: list[int] = []
 
-    # Use filtered (contains eval_scores + full fields) for deeper analysis
-    source = filtered or raw_pairs or final
+    # Describe the current public release whenever available.
+    source = final or filtered or raw_pairs
     for qa in source:
         bloom_counter[str(qa.get("bloom_level", "Unknown"))] += 1
         is_mm = bool(qa.get("is_multimodal", False))
@@ -199,7 +203,15 @@ def analyze(raw_path: Path, filtered_path: Path, dataset_path: Path) -> dict:
         return sum(lst) / len(lst) if lst else 0.0
 
     # ── Unique documents ───────────────────────────────────────────────────
-    doc_ids = {str(qa.get("doc_id", "")) for qa in source if qa.get("doc_id")}
+    doc_ids = set()
+    for qa in source:
+        doc_id = str(qa.get("doc_id", "")).strip()
+        if doc_id:
+            doc_ids.add(doc_id)
+            continue
+        qa_id = str(qa.get("qa_id", ""))
+        if "_chunk_" in qa_id:
+            doc_ids.add(qa_id.split("_chunk_", 1)[0])
 
     stats = {
         "scale": {

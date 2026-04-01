@@ -36,6 +36,40 @@ def _model_label(report: dict) -> str:
     return str(report.get("model_id", "unknown")).split("/")[-1]
 
 
+def _report_diagnostics(report: dict) -> dict:
+    diagnostics = report.get("diagnostics")
+    if isinstance(diagnostics, dict):
+        return diagnostics
+
+    details = report.get("details", [])
+    if not isinstance(details, list) or not details:
+        return {
+            "answered_rate": 0.0,
+            "empty_raw_output_rate": 0.0,
+            "valid_for_interpretation": True,
+        }
+
+    total = len(details)
+    empty = sum(1 for row in details if str(row.get("raw_output", "")).strip() == "")
+    answered = sum(1 for row in details if str(row.get("pred_letter", "")) in {"A", "B", "C", "D"})
+    empty_rate = empty / total if total else 0.0
+    return {
+        "answered_rate": answered / total if total else 0.0,
+        "empty_raw_output_rate": empty_rate,
+        "valid_for_interpretation": empty_rate < 0.10,
+    }
+
+
+def _status_label(report: dict | None) -> str:
+    if not report:
+        return "--"
+    diagnostics = _report_diagnostics(report)
+    if diagnostics.get("valid_for_interpretation", True):
+        return "OK"
+    empty_rate = float(diagnostics.get("empty_raw_output_rate", 0.0))
+    return f"Invalid ({empty_rate * 100:.1f}% empty)"
+
+
 def aggregate(report_dir: Path) -> tuple[list[dict], list[dict], list[dict]]:
     reports = []
     for path in sorted(report_dir.glob("bench_*.json")):
@@ -64,6 +98,13 @@ def aggregate(report_dir: Path) -> tuple[list[dict], list[dict], list[dict]]:
         noctx_acc = noctx.get("metrics", {}).get("accuracy_overall") if noctx else None
         delta = (ctx_acc - noctx_acc) if ctx_acc is not None and noctx_acc is not None else None
         n_samples = ctx.get("n_samples") if ctx else (noctx.get("n_samples") if noctx else 0)
+        ctx_diag = _report_diagnostics(ctx) if ctx else {}
+        noctx_diag = _report_diagnostics(noctx) if noctx else {}
+        status = "OK"
+        if ctx and not ctx_diag.get("valid_for_interpretation", True):
+            status = _status_label(ctx)
+        elif noctx and not noctx_diag.get("valid_for_interpretation", True):
+            status = _status_label(noctx)
 
         main_rows.append(
             {
@@ -73,6 +114,9 @@ def aggregate(report_dir: Path) -> tuple[list[dict], list[dict], list[dict]]:
                 "acc_ctx": _pct(ctx_acc),
                 "acc_noctx": _pct(noctx_acc),
                 "delta_ctx_minus_noctx": _pct(delta) if delta is not None else "--",
+                "answered_ctx": _pct(ctx_diag.get("answered_rate")) if ctx else "--",
+                "answered_noctx": _pct(noctx_diag.get("answered_rate")) if noctx else "--",
+                "status": status,
                 "ctx_report": ctx["_path"].name if ctx else "",
                 "noctx_report": noctx["_path"].name if noctx else "",
             }
@@ -115,16 +159,16 @@ def build_tex(main_rows: list[dict]) -> str:
         "\\centering",
         "\\caption{Zero-shot benchmark results on the eval-ready test split.}",
         "\\label{tab:main_benchmark}",
-        "\\begin{tabular}{lccc}",
+        "\\begin{tabular}{lcccc}",
         "\\toprule",
-        "\\textbf{Model} & \\textbf{N} & \\textbf{Acc. (ctx)} & \\textbf{Acc. (no-ctx)} \\\\",
+        "\\textbf{Model} & \\textbf{N} & \\textbf{Acc. (ctx)} & \\textbf{Acc. (no-ctx)} & \\textbf{Status} \\\\",
         "\\midrule",
     ]
     for row in main_rows:
         if row["split"] != "test":
             continue
         lines.append(
-            f"{row['model']} & {row['n_samples']} & {row['acc_ctx']} & {row['acc_noctx']} \\\\"
+            f"{row['model']} & {row['n_samples']} & {row['acc_ctx']} & {row['acc_noctx']} & {row['status']} \\\\"
         )
     lines += [
         "\\bottomrule",
