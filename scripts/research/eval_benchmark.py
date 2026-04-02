@@ -468,9 +468,7 @@ def _run_single_mode(
     outputs = llm.generate(
         prompts,
         sampling_params,
-        use_tqdm=True,
-        progress_label=f"{mode_name} API",
-        progress_log_path=progress_log_path,
+        use_tqdm=True
     )
     elapsed = time.perf_counter() - start_time
     print(f"[INFO] {mode_name} complete in {elapsed:.2f}s ({len(records)/elapsed:.2f} samples/s)")
