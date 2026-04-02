@@ -202,10 +202,13 @@ def _init_llm(
     if quantization:
         llm_kwargs["quantization"] = quantization
 
+    from vllm.sampling_params import GuidedDecodingParams
+    
     llm = LLM(**llm_kwargs)
     sampling_params = SamplingParams(
         max_tokens=4,
         temperature=0.0,
+        guided_decoding=GuidedDecodingParams(choice=["A", "B", "C", "D"])
     )
     return llm, sampling_params
 
