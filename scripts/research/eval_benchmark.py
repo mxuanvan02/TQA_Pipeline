@@ -16,6 +16,7 @@ Dataset Schema: TQARecord JSONL.
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import re
 import sys
@@ -612,11 +613,17 @@ if __name__ == "__main__":
     parser.add_argument("--split", type=str, default=None, help="Optional split filter, e.g. test")
     parser.add_argument("--run-name", type=str, default=None, help="Optional output stem override")
     parser.add_argument("--use-api", action="store_true", help="Use OpenAI-compatible API instead of local vLLM")
-    parser.add_argument("--api-base", type=str, default="http://10.9.5.18:1234/v1", help="API base URL")
-    parser.add_argument("--api-key", type=str, default="sk-tqa-benchmark-2026-v1", help="API key")
+    parser.add_argument("--api-base", type=str, default=os.getenv("BENCHMARK_API_BASE", "http://localhost:1234/v1"), help="API base URL")
+    parser.add_argument("--api-key", type=str, default=os.getenv("BENCHMARK_API_KEY", "sk-tqa-benchmark-2026-v1"), help="API key")
     parser.add_argument("--max-context-chars", type=int, default=2000, help="Maximum characters from context to include in with-context prompts")
     
     args = parser.parse_args()
+    use_api = args.use_api
+    # Force GPU only for 'train' split as per project policy
+    if args.split == "train" and use_api:
+        print("[WARN] Forcing GPU-only (local vLLM) for 'train' split. Disabling --use-api.")
+        use_api = False
+
     run_eval(
         args.dataset,
         args.model,
@@ -630,7 +637,7 @@ if __name__ == "__main__":
         max_model_len=args.max_model_len,
         max_num_seqs=args.max_num_seqs,
         both_modes=args.both_modes,
-        use_api=args.use_api,
+        use_api=use_api,
         api_base=args.api_base,
         api_key=args.api_key,
         max_context_chars=args.max_context_chars,

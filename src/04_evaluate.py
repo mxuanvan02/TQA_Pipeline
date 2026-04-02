@@ -22,6 +22,7 @@ import re
 import shutil
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -126,6 +127,8 @@ class QAJudge:
         self._tokenizer = None
         self._vllm_engine = None
         self._vllm_sampling = None
+        self._api_client = None
+        self._api_wrapper = None
 
     def _load(self) -> None:
         """
@@ -138,8 +141,18 @@ class QAJudge:
         # same-family self-reinforcement bias in LLM-as-a-judge evaluation.
         # See §4.1 of the paper for experimental validation.
         """
-        if self._model is not None or self._vllm_engine is not None:
+        if self._model is not None or self._vllm_engine is not None or self._api_wrapper is not None:
             return
+
+        # Check if we should use API mode (priority)
+        from src.config import CFG
+        if getattr(self.cfg, "use_api", False) or "http" in CFG.benchmark.api_base:
+            try:
+                self._load_api()
+                if self._api_wrapper:
+                    return
+            except Exception as e:
+                log.warning("Failed to load API judge (%s). Falling back to local.", e)
 
         if getattr(self.cfg, "use_vllm", False):
             try:
@@ -165,6 +178,65 @@ class QAJudge:
                 self._load_hf()
             else:
                 raise
+
+    def _load_api(self) -> None:
+        """Load API-based judge (OpenAI-compatible)."""
+        from src.config import CFG
+        api_base = CFG.benchmark.api_base
+        api_key = CFG.benchmark.api_key
+        model_id = CFG.benchmark.model_name
+
+        log.info("Loading Judge LLM via API: %s at %s", model_id, api_base)
+        try:
+            from openai import OpenAI
+            self._api_client = OpenAI(base_url=api_base, api_key=api_key)
+            
+            # We wrap it in a mock vLLM-like interface
+            class Stage4APIWrapper:
+                def __init__(self, client, model_id, temp, max_tokens=256):
+                    self.client = client
+                    self.model_id = model_id
+                    self.temperature = temp
+                    self.max_tokens = max_tokens
+
+                def generate(self, prompts, use_tqdm=False, progress_label=None):
+                    def _call(p):
+                        try:
+                            # Use simple completion for judge
+                            res = self.client.chat.completions.create(
+                                model=self.model_id,
+                                messages=[{"role": "user", "content": p}],
+                                max_tokens=self.max_tokens,
+                                temperature=self.temperature
+                            )
+                            # Mock vLLM output structure
+                            return type('obj', (object,), {
+                                'outputs': [type('obj', (object,), {'text': res.choices[0].message.content})]
+                            })
+                        except Exception as e:
+                            log.error("API call failed: %s", e)
+                            return type('obj', (object,), {
+                                'outputs': [type('obj', (object,), {'text': ""})]
+                            })
+
+                    results = [None] * len(prompts)
+                    max_workers = 8 # Balanced for judge throughput
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        futures = {executor.submit(_call, p): i for i, p in enumerate(prompts)}
+                        it = as_completed(futures)
+                        if use_tqdm:
+                            it = tqdm(it, total=len(prompts), desc=progress_label or "API Judge")
+                        for f in it:
+                            results[futures[f]] = f.result()
+                    return results
+
+            self._api_wrapper = Stage4APIWrapper(
+                self._api_client, model_id, self.cfg.eval_temperature
+            )
+            log.info("  API judge ready")
+        except ImportError:
+            log.error("openai not found. Cannot use API judge.")
+            self._api_wrapper = None
 
     def _load_vllm(self) -> None:
         """Load the model using vLLM for high-throughput inference."""
@@ -306,6 +378,18 @@ class QAJudge:
         if not valid_prompts:
             return results
             
+        if self._api_wrapper is not None:
+             # --- API Path ---
+             batch_results = self._api_wrapper.generate(
+                 valid_prompts, use_tqdm=False, progress_label="API Judge"
+             )
+             for batch_idx, valid_idx in enumerate(valid_indices):
+                 response = batch_results[batch_idx].outputs[0].text
+                 scores = _parse_eval_xml(response)
+                 if scores:
+                     results[valid_idx] = {**qa_pairs[valid_idx], "eval_scores": scores}
+             return results
+
         if self._vllm_engine is not None:
             # --- vLLM Engine Path ---
             try:

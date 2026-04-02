@@ -153,7 +153,7 @@ class BenchmarkConfig:
         default_factory=lambda: os.environ.get("BENCHMARK_MODEL_NAME", "openai/gpt-oss-20b")
     )
     api_base: str = field(
-        default_factory=lambda: os.environ.get("BENCHMARK_API_BASE", "http://10.9.5.18:1234/v1")
+        default_factory=lambda: os.environ.get("BENCHMARK_API_BASE", "http://localhost:1234/v1")
     )
     api_key: str = field(
         default_factory=lambda: os.environ.get("BENCHMARK_API_KEY", "sk-tqa-benchmark-2026-v1")
