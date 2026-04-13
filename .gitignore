@@ -58,3 +58,6 @@ research/paper/*.synctex.gz
 research/paper/*.xdv
 research/paper.zip
 research/paper/figures/*.pdf
+
+*.md
+!README.md
