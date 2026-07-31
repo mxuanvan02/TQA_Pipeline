@@ -1,65 +1,159 @@
-# HOEIT-LegalQA Pipeline
+# TQA Pipeline: HOEIT-LegalQA and ECM-TQAG
 
-This repository contains the construction and benchmarking code for **HOEIT-LegalQA**, a Bloom-structured Vietnamese legal textbook question-answering benchmark.
+This repository contains two separate Vietnamese legal-textbook QA tracks:
 
-## Links
+- **HOEIT-LegalQA benchmark:** the established Bloom-structured benchmark pipeline. Dataset: [maixuanvan/dhh2026-tqa-output](https://huggingface.co/datasets/maixuanvan/dhh2026-tqa-output).
+- **ECM-TQAG experimental protocol:** a reproducible evidence-chain generation and audit pipeline. Its intended derivative dataset location is [maixuanvan/ECM-TQAG](https://huggingface.co/datasets/maixuanvan/ECM-TQAG), but no ECM artifact is released until generation, quality, and rights gates pass.
 
-- Dataset: https://huggingface.co/datasets/maixuanvan/dhh2026-tqa-output
-- Code: https://github.com/mxuanvan02/TQA_Pipeline
+The two tracks must not be conflated. HOEIT-LegalQA is an existing benchmark release; ECM-TQAG v3 is a source-bound experiment.
 
-## Current Paper-Aligned Release
+> **Release boundary:** this repository does not grant redistribution rights for source textbooks, page images, or raw model ledgers. A parsed ECM record only means its structural/provenance contract passed; it does not prove legal correctness, pedagogical quality, unique-best-answer validity, or visual grounding.
 
-- Source documents: 48 university-level law textbooks from the Institute of Open Education and Information Technology, Hue University
-- Full public release: 14,998 records
-- Eval-ready benchmark subset: 14,210 records
-- Document-aware train/dev/test split: 9,894 / 2,144 / 2,172 records
-- Bloom levels: Remember, Understand, Apply
-- Evaluated model families: Gemma-2-9B, Llama-3-8B, Mistral-7B, Qwen2.5-7B
+## HOEIT-LegalQA benchmark
 
-The released dataset is intended for Vietnamese legal NLP, legal-education question answering, Bloom-level reasoning analysis, and retrieval-grounded multiple-choice benchmarking. It is not a source of legal advice and should not be treated as a high-stakes assessment instrument without independent expert validation.
+### Current paper-aligned release
 
-## Pipeline
+- Source documents: 48 university-level law textbooks from the Institute of Open Education and Information Technology, Hue University.
+- Full public release: 14,998 records; eval-ready subset: 14,210 records.
+- Document-aware train/dev/test split: 9,894 / 2,144 / 2,172 records.
+- Bloom levels: Remember, Understand, Apply.
+- Evaluated model families: Gemma-2-9B, Llama-3-8B, Mistral-7B, Qwen2.5-7B.
 
-The construction pipeline has four stages.
+The benchmark supports Vietnamese legal NLP, legal-education QA, Bloom-level reasoning analysis, and retrieval-grounded multiple-choice evaluation. It is not legal advice or a high-stakes assessment instrument without independent expert validation.
 
-1. PDF digitization: `marker-pdf` converts the 48 source PDFs to Markdown and extracts page-level visual assets.
-2. Multimodal structuring: Markdown is split into source-traceable legal contexts using document headers and Vietnamese legal structural markers; Vintern-1B-v3 enriches image-bearing contexts.
-3. QA generation: Qwen2.5-7B-Instruct-AWQ generates Vietnamese multiple-choice questions across Remember, Understand, and Apply Bloom levels, with legal-syllogism rationales.
-4. Quality filtering: Gemma-2-2B-IT acts as a cross-family judge for groundedness, multimodal alignment, legal fluency, and taxonomy consistency.
+### Pipeline
 
-Benchmark preparation is separate from the four-stage construction pipeline. It applies answer normalization, language-sanity cleanup, document-aware splitting, and deterministic option-position rebalancing.
+1. PDF digitization: `marker-pdf` converts source PDFs to Markdown and extracts page-level visual assets.
+2. Multimodal structuring: Markdown is split into source-traceable legal contexts; Vintern-1B-v3 enriches image-bearing contexts.
+3. QA generation: Qwen2.5-7B-Instruct-AWQ generates Vietnamese MCQs across the three Bloom levels.
+4. Quality filtering: Gemma-2-2B-IT checks groundedness, multimodal alignment, legal fluency, and taxonomy consistency.
 
-## Repository Layout
+Benchmark preparation is separate: it applies answer normalization, language-sanity cleanup, document-aware splitting, and deterministic option-position rebalancing.
 
-- `src/01_digitize.py`: PDF-to-Markdown digitization.
-- `src/02_structuring.py`: Markdown chunking and multimodal context construction.
-- `src/03_qag_generator.py`: Bloom-level QA generation.
-- `src/04_evaluate.py`: LLM-as-judge filtering.
-- `scripts/research/`: benchmark preparation, integrity checks, figures, and statistical summaries.
-- `run_pipeline.sh`, `run_stage3.sh`, `run_stage4.sh`: convenience entry points for pipeline execution.
+### Benchmark metrics
 
-Generated data, raw PDFs, intermediate outputs, benchmark artifacts, and paper build products are intentionally excluded from Git. The public dataset release is hosted on Hugging Face.
+Accuracy is the proportion of correct held-out MCQ answers. The benchmark compares `None` (question and options only) with `With` (question, options, and gold source context). Context gain is their paired item-level difference in percentage points. Accuracy intervals use Wilson 95% confidence intervals; context-gain intervals use paired differences; p-values use continuity-corrected McNemar tests over discordant outcomes.
 
-## Benchmark Metrics
+## ECM-TQAG v3: evidence-chain multimodal TQA generation
 
-Accuracy is the proportion of correctly answered multiple-choice items on the held-out test split. The benchmark compares two zero-shot settings:
+### Method contract
 
-- `None`: question and answer options only.
-- `With`: question, answer options, and the gold source context.
+For every frozen chunk, ECM-TQAG uses three evidence conditions:
 
-Context gain is the paired item-level difference between the `With` and `None` settings, reported in percentage points. Accuracy intervals use Wilson 95% confidence intervals; context-gain intervals use paired item-level differences; and p-values use a continuity-corrected McNemar test over discordant item outcomes.
+- **T:** extracted text only.
+- **TL_struct:** text plus declared document structure.
+- **TLV:** text, structure, and attached image pixels.
 
-## Minimal Setup
+It produces one candidate item under each protocol:
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+- **Direct:** creates an MCQ from one directly supported proposition.
+- **Answer-first:** locks a supported answer first, then builds a question and same-domain distractors.
+- **ECM (Evidence-Chain Method):** makes two model calls. A planner sees frozen evidence and locks source-bound evidence units (`T*`, `S*`, `I*`), distinct roles (`premise`, `mapping`, `constraint`), required units, a chain, and `answer_atoms`. A realizer receives **only this locked plan**, not the original text or image pixels, and creates one MCQ.
+
+The validator rejects invalid IDs/roles, units not bound to frozen evidence, plans with fewer than two required roles, missing visual units in ECM--TLV plans, incomplete traces/anchors, and changed answer atoms. The full matrix is `8 chunks × 3 conditions × 3 protocols = 72` cells. Direct and Answer-first each make one request per cell; ECM uses planner plus realizer, so a complete run plans **96 API calls**.
+
+### Repository layout
+
+```text
+scripts/research/build_ecm_8chunk_manifest.py  # builds immutable 8×3 manifest
+scripts/research/run_qwen37_tqa_pilot.py       # scoped pilot or full v3 matrix
+scripts/research/audit_strict_tqa_results.py   # deterministic provenance audit
+tests/test_qwen37_tqa_pilot.py                 # ECM contract tests
+research/artifacts/                            # local, git-ignored manifests
+research/results/                              # local, git-ignored ledgers/audits
 ```
 
-GPU execution is recommended for the full construction pipeline because Stage 1, Stage 2, Stage 3, and Stage 4 use OCR/VLM/LLM components. CPU-only execution is suitable mainly for lightweight integrity checks and post-processing scripts.
+The historical runner filename is retained for compatibility, but it runs either a scoped pilot or the complete matrix.
 
-## Citation
+### Requirements
+
+- Python 3.10+; the ECM runner itself uses only the standard library.
+- An OpenRouter key authorized for `qwen/qwen3.7-plus`.
+- A local immutable manifest and its referenced image files.
+
+For the broader OCR/chunking pipeline:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+Never commit `.env` files, API keys, raw textbooks, extracted images, or raw ledgers.
+
+### Build immutable evidence packages
+
+The generation runner consumes a frozen manifest rather than arbitrary source text. This makes the T/TL_struct/TLV inputs explicit and verifies image size/hash before a request.
+
+```bash
+python scripts/research/build_ecm_8chunk_manifest.py \
+  --contexts data/output/interim/multimodal_contexts.json \
+  --pilot-manifest research/artifacts/pilot_evaluation_manifest.json \
+  --out research/artifacts/ecm_inputs_8chunks_v3.json
+```
+
+The input contract requires exactly eight chunks and T, TL_struct, TLV packages for each chunk. T has text only; TL_struct adds declared structure; TLV adds verified images. Image markdown, filenames, and page separators are removed from shared text; pixels are attached only for TLV.
+
+### Validate before API calls
+
+```bash
+python -m unittest tests/test_qwen37_tqa_pilot.py -v
+
+RUN_ID="qwen37_ecm_evidencechain_matrix72_v3_YYYYMMDD"
+OUT_DIR="research/results/${RUN_ID}"
+
+python scripts/research/run_qwen37_tqa_pilot.py \
+  --manifest research/artifacts/ecm_inputs_8chunks_v3.json \
+  --out-dir "$OUT_DIR" \
+  --experiment-id "$RUN_ID" \
+  --model qwen/qwen3.7-plus \
+  --api-key-env OPENROUTER_API_KEY \
+  --seed 20260824 \
+  --all --dry-run
+```
+
+The dry run should report 72 cells and 96 planned calls; it neither reads an API key nor writes a result directory.
+
+### Run frozen chunks to a TQA ledger
+
+Set the key in the same terminal that starts the runner; never place it in Git, notebooks, issues, or chat logs.
+
+```bash
+export OPENROUTER_API_KEY='replace-with-your-local-secret'
+
+RUN_ID="qwen37_ecm_evidencechain_matrix72_v3_YYYYMMDD"
+OUT_DIR="research/results/${RUN_ID}"
+test ! -e "$OUT_DIR" || { echo "Refusing to overwrite $OUT_DIR"; exit 1; }
+
+python scripts/research/run_qwen37_tqa_pilot.py \
+  --manifest research/artifacts/ecm_inputs_8chunks_v3.json \
+  --out-dir "$OUT_DIR" \
+  --experiment-id "$RUN_ID" \
+  --model qwen/qwen3.7-plus \
+  --base-url https://openrouter.ai/api/v1/chat/completions \
+  --api-key-env OPENROUTER_API_KEY \
+  --seed 20260824 \
+  --timeout-sec 180 \
+  --retries 2 \
+  --all
+```
+
+The non-overwriting directory contains `results.jsonl` (append-only cell ledger), `prompt_audit.jsonl` (prompt hashes and field receipts), and `summary.json`. A nonzero exit records rejects/errors without deleting the ledger; do not rerun into the same output directory.
+
+For a nine-cell scoped pilot, use all three `--condition` values and one `--chunk-id` in a distinct output directory.
+
+### Mechanical audit
+
+```bash
+python scripts/research/audit_strict_tqa_results.py \
+  --results "$OUT_DIR/results.jsonl" \
+  --manifest research/artifacts/ecm_inputs_8chunks_v3.json \
+  --output "$OUT_DIR/mechanical_audit.json"
+```
+
+The audit checks record shape, distinct options, answer/choice consistency where applicable, literal text/structure binding, unit roles, chain/atom consistency, locked anchors, trace coverage, and ECM--TLV visual-unit requirements. It is not a semantic, legal, pedagogical, or image-grounding judge; those require documented human/expert review.
+
+## Transparency and citation
+
+Runtime prompts are in `scripts/research/run_qwen37_tqa_pilot.py`; prompt version and SHA-256 receipts are stored locally per cell. Release only code, synthetic fixtures, non-sensitive schemas, and derivative records cleared for redistribution. Do not upload raw books, scans, figure pixels, long verbatim excerpts, credentials, or unreviewed raw model output.
 
 ```bibtex
 @dataset{hoeitlegalqa2026,
@@ -70,3 +164,5 @@ GPU execution is recommended for the full construction pipeline because Stage 1,
   url       = {https://huggingface.co/datasets/maixuanvan/dhh2026-tqa-output}
 }
 ```
+
+For the legacy Google Colab OCR/QAG workflow, see [README_COLAB.md](README_COLAB.md).

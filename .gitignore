@@ -37,11 +37,28 @@ data/output/interim/
 # Generated processed datasets and derived assets
 data/output/processed/
 
-# Generated research artifacts / benchmark outputs
-research/
-research/artifacts/
-research/results/
-research/human_eval/
+# Research artifacts and non-release working material.
+# Only the ECM manuscript sources listed below are public; raw inputs, ledgers,
+# PDFs, figures, and working notes remain local.
+/research/*
+!/research/manuscript_ecm_tqag_ictc2026/
+/research/manuscript_ecm_tqag_ictc2026/*
+!/research/manuscript_ecm_tqag_ictc2026/main.tex
+!/research/manuscript_ecm_tqag_ictc2026/references.bib
+/research/artifacts/
+/research/results/
+/research/human_eval/
+
+# Research scripts are intentionally whitelisted, rather than publishing
+# historical runners that can reference local-only ledgers.
+/scripts/research/*
+!/scripts/research/run_qwen37_tqa_pilot.py
+!/scripts/research/audit_strict_tqa_results.py
+!/scripts/research/build_ecm_8chunk_manifest.py
+
+# Keep only the executable ECM contract test public.
+/tests/*
+!/tests/test_qwen37_tqa_pilot.py
 
 # Paper build artifacts
 research/paper/*.aux
