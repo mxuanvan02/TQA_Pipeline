@@ -34,7 +34,7 @@ Benchmark preparation is separate: it applies answer normalization, language-san
 
 Accuracy is the proportion of correct held-out MCQ answers. The benchmark compares `None` (question and options only) with `With` (question, options, and gold source context). Context gain is their paired item-level difference in percentage points. Accuracy intervals use Wilson 95% confidence intervals; context-gain intervals use paired differences; p-values use continuity-corrected McNemar tests over discordant outcomes.
 
-## ECM-TQAG v3: evidence-chain multimodal TQA generation
+## ECM-TQAG v4: graph-program multimodal TQA generation
 
 ### Method contract
 
@@ -48,15 +48,15 @@ It produces one candidate item under each protocol:
 
 - **Direct:** creates an MCQ from one directly supported proposition.
 - **Answer-first:** locks a supported answer first, then builds a question and same-domain distractors.
-- **ECM (Evidence-Chain Method):** makes two model calls. A planner sees frozen evidence and locks source-bound evidence units (`T*`, `S*`, `I*`), distinct roles (`premise`, `mapping`, `constraint`), required units, a chain, and `answer_atoms`. A realizer receives **only this locked plan**, not the original text or image pixels, and creates one MCQ.
+- **ECM (Evidence-Chain Method):** makes a planner call followed, when the plan passes deterministic checks, by a realization call. The planner proposes a source-bound document graph and a closed-catalog motif request. Local code matches the motif, compiles and executes a restricted graph program, and derives locked answer atoms and provenance traces. A realizer receives **only this locked construction**, not the original text or image pixels, and creates one MCQ.
 
-The validator rejects invalid IDs/roles, units not bound to frozen evidence, plans with fewer than two required roles, missing visual units in ECM--TLV plans, incomplete traces/anchors, and changed answer atoms. The full matrix is `8 chunks × 3 conditions × 3 protocols = 72` cells. Direct and Answer-first each make one request per cell; ECM uses planner plus realizer, so a complete run plans **96 API calls**.
+The validator rejects invalid IDs/roles, nodes not bound to frozen evidence, unmatched motifs, missing visual nodes in ECM--TLV plans, incomplete traces/anchors, and changed executor-derived answer atoms. The full matrix is `8 chunks × 3 conditions × 3 protocols = 72` cells. Direct and Answer-first each make one request per cell; ECM uses planner plus realization when planning succeeds, so the complete design plans up to **96 API calls**.
 
 ### Repository layout
 
 ```text
 scripts/research/build_ecm_8chunk_manifest.py  # builds immutable 8×3 manifest
-scripts/research/run_qwen37_tqa_pilot.py       # scoped pilot or full v3 matrix
+scripts/research/run_qwen37_tqa_pilot.py       # scoped pilot or full v4 matrix
 scripts/research/audit_strict_tqa_results.py   # deterministic provenance audit
 tests/test_qwen37_tqa_pilot.py                 # ECM contract tests
 research/artifacts/                            # local, git-ignored manifests
@@ -90,7 +90,7 @@ python scripts/research/build_ecm_8chunk_manifest.py \
   --out research/artifacts/ecm_inputs_8chunks_v3.json
 ```
 
-The input contract requires exactly eight chunks and T, TL_struct, TLV packages for each chunk. T has text only; TL_struct adds declared structure; TLV adds verified images. Image markdown, filenames, and page separators are removed from shared text; pixels are attached only for TLV.
+The input contract requires exactly eight chunks and T, TL_struct, TLV packages for each chunk. T has text only; TL_struct adds declared structure; TLV adds verified images. Image markdown, filenames, and page separators are removed from shared text; pixels are attached only for TLV. When OCR splitting leaves a package without sufficient semantic context, the package must be augmented only with demonstrably adjacent source context; unrelated neighbouring text is not inserted.
 
 ### Validate before API calls
 

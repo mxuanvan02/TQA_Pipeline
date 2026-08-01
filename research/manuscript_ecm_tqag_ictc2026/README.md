@@ -27,4 +27,4 @@ latexmk -C
 
 This package contains only files required to compile the manuscript. The associated research-software repository, code, schemas, and synthetic fixtures are available separately at:
 
-<https://github.com/mxuanvan02/ECM-TQAG>
+<https://github.com/mxuanvan02/TQA_Pipeline>
