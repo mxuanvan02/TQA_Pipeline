@@ -159,7 +159,7 @@ The 12 rejections are classified as follows:
 
 | Scenario | Count | Interpretation |
 |---|---:|---|
-| Insufficient evidence | 5 | The model/planner declined to construct an item from evidence judged inadequate; 4 are from the title/image-only `LUAT CHUNG KHOAN` package. |
+| Insufficient evidence | 5 | The supplied source context did not support a complete construction; four occurred in a title-and-image-only package. |
 | Non-literal source grounding | 4 | A graph node or anchor paraphrased instead of reproducing a contiguous source span. |
 | ECM answer not bound to executor atom | 2 | The selected option was not mechanically bound to the derived answer atom. |
 | Invalid ECM evidence anchor | 1 | The final anchor did not match the locked graph node. |

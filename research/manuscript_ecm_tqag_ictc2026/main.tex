@@ -31,12 +31,12 @@ where a matched motif $G_m$ supplies a restricted program $z$, yielding typed an
 The contributions are: (i) a source-grounded representation with matched evidence packages and image-integrity receipts; (ii) motif-guided, answer-before-question derivation of atoms and traces, in which motif matching, program compilation, execution, and tracing are executable rather than declarative; (iii) a replayable contract for package identity, derivation, atom--trace correspondence, and MCQ consistency; and (iv) an empirical evaluation across evidence conditions and construction methods.
 
 \section{ECM-TQAG Construction Protocol}
-\begin{figure}[t]
+\begin{figure*}[t]
 \centering
-\includegraphics[width=\columnwidth]{ecm_tqag_architecture.pdf}
-\caption{ECM-TQAG architecture. Multimodal evidence is aligned into a document graph; a matched motif is compiled and executed to derive answer atoms $A$ and provenance trace $\Gamma$; question formulation follows the derived construction; and the resulting package undergoes deterministic integrity checking and semantic review.}
+\includegraphics[width=\textwidth]{ecm_tqag_architecture.pdf}
+\caption{ECM-TQAG architecture and data pipeline. Source documents are normalized into fixed multimodal evidence packages. A planner proposes a typed evidence graph and motif request; deterministic matching, compilation, execution, and tracing produce answer atoms and provenance. A question realizer formats the locked construction, after which replay checks structural integrity and the evaluation report aggregates cell outcomes.}
 \label{fig:architecture}
-\end{figure}
+\end{figure*}
 \subsection{Document representation and evidence packages}
 A source document is $D=(T,L,V,M,\Pi)$: text, structure/layout, visual regions, metadata, and source-level provenance. Parsing and alignment produce
 \begin{equation}
@@ -67,12 +67,6 @@ The final check set $\mathcal{C}$ enforces package identity, well-formed derivat
 
 \section{Experimental Evaluation}
 \label{sec:experiments}
-\begin{figure}[t]
-\centering
-\includegraphics[width=\columnwidth]{ecm_tqag_data_pipeline.pdf}
-\caption{Data pipeline used to prepare and evaluate the evidence packages. Source documents are converted into traceable multimodal contexts, packaged under the three evidence conditions, processed by the three construction methods, and checked by deterministic replay before reporting.}
-\label{fig:pipeline}
-\end{figure}
 We evaluate eight selected chunks from five Vietnamese law textbooks under a full factorial design with three evidence conditions and three construction methods, yielding $8\times3\times3=72$ cells. The conditions isolate the contribution of evidence modalities: $\T$ supplies extracted text; $\TL$ adds declared document structure; and $\TLV$ adds the attached page image. The methods compare direct proposition-to-question generation, answer-first generation, and ECM-TQAG's graph--motif--program construction. Direct and answer-first use one model request per cell. ECM-TQAG uses a planning request followed by realization after deterministic plan validation. Thus the design contains 24 direct requests, 24 answer-first requests, and up to 48 ECM requests: 96 requests when every ECM plan reaches realization.
 \begin{table}[t]
 \centering
@@ -103,7 +97,7 @@ A post-generation quality gate has two levels. First, the mechanical audit check
 \subsection{ECM matrix result and rejection taxonomy}
 The evaluation contains 72 cells. Two packages were found to lack sufficient semantic context because of OCR/chunk boundaries. Only the 18 cells that used those packages were rerun after adding demonstrably adjacent context; the remaining 54 cells were retained unchanged. Overall, 60 cells (83.3\%) passed the structural validity criteria and 12 (16.7\%) were rejected. The 54 retained cells produced 47 passes and 7 rejections; the 18 context-recovered cells produced 13 passes and 5 rejections. Because these two groups have different evidence digests, each group was audited against its own evidence description before the results were combined.
 
-The 12 rejections are grouped by the first failed criterion into four scenarios. (i) Five cells were classified under insufficient evidence: four concerned the title/image-only \textit{LUAT CHUNG KHOAN} package and one concerned a long legal-text package. (ii) Four cells were classified under literal source grounding: three contained graph nodes or anchors whose spans differed from contiguous source spans in a legal-text chunk, and one occurred in the context-recovered French-court diagram package. (iii) Two ECM cells were classified under answer--atom binding because their selected options differed from the atoms produced by the restricted program. (iv) One ECM cell was classified under the locked-anchor criterion because its final evidence anchor differed from the graph node fixed during construction. Thus, five rejections diagnose evidence coverage and seven diagnose output/contract compliance. Context recovery remained conservative: the French-court package received semantically adjacent context, while the title/image-only package retained its available evidence.
+The 12 rejections are grouped by the first failed criterion into four scenarios. Five cells were classified under insufficient evidence, four under literal source grounding, two under answer--atom binding, and one under the locked-anchor criterion. The evidence-coverage cases arose when the supplied source context lacked enough support for a complete construction. The remaining cases reflect failures to preserve literal evidence anchors or executor-derived answer bindings during realization. Context recovery preserved source identity and added adjacent context only where the document structure supported that linkage.
 
 \section{Limitations}
 The selected corpus provides a reproducible feasibility setting across Vietnamese legal textbooks. The graph is proposed from the source evidence, while literal source binding and executable traversal provide the structural basis for semantic and legal review. Distractor quality, pedagogical usefulness, and image dependence are assessed through documented expert review and learner-oriented studies \cite{kurdi2020systematic,haladyna2002review,goyal2017making,agrawal2018don}.

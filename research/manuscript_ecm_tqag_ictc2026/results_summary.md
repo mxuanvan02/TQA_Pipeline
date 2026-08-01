@@ -20,10 +20,10 @@
 
 | Scenario | Count | Cells |
 |---|---:|---|
-| Insufficient evidence | 5 | 4 on `LUAT CHUNG KHOAN_chunk_0`; 1 on `47. LY LUAN DINH TOI DANH_chunk_40` |
-| Non-literal source grounding | 4 | 3 on `47. LY LUAN DINH TOI DANH_chunk_40`; 1 on `19.LUAT HIEN PHAP NUOC NGOAI_chunk_125` |
-| ECM answer not bound to executor atom | 2 | `19.LUAT HIEN PHAP NUOC NGOAI_chunk_44`; `17,18. LUAT HIEN PHAP VIET NAM_chunk_79` |
-| Invalid ECM evidence anchor | 1 | `47. LY LUAN DINH TOI DANH_chunk_50` |
+| Insufficient evidence | 5 | 4 in a title-and-image-only package; 1 in a long legal-text package |
+| Non-literal source grounding | 4 | 3 in a legal-text package; 1 in a context-recovered diagram package |
+| ECM answer not bound to executor atom | 2 | 2 ECM cells |
+| Invalid ECM evidence anchor | 1 | 1 ECM cell |
 
 The insufficiency cases are evidence-coverage outcomes. The other cases are model-output/contract failures detected by deterministic replay. The two short packages were not padded with unrelated neighbouring text: the French-court package was augmented with its semantically adjacent preceding section, while the securities package remained title-plus-image because no safe adjacent OCR context described that image.
 
