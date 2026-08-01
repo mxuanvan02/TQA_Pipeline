@@ -97,7 +97,7 @@ The input contract requires exactly eight chunks and T, TL_struct, TLV packages 
 ```bash
 python -m unittest tests/test_qwen37_tqa_pilot.py -v
 
-RUN_ID="qwen37_ecm_evidencechain_matrix72_v3_YYYYMMDD"
+RUN_ID="qwen37_ecm_graph_program_matrix72_v4_YYYYMMDD"
 OUT_DIR="research/results/${RUN_ID}"
 
 python scripts/research/run_qwen37_tqa_pilot.py \
@@ -119,7 +119,7 @@ Set the key in the same terminal that starts the runner; never place it in Git, 
 ```bash
 export OPENROUTER_API_KEY='replace-with-your-local-secret'
 
-RUN_ID="qwen37_ecm_evidencechain_matrix72_v3_YYYYMMDD"
+RUN_ID="qwen37_ecm_graph_program_matrix72_v4_YYYYMMDD"
 OUT_DIR="research/results/${RUN_ID}"
 test ! -e "$OUT_DIR" || { echo "Refusing to overwrite $OUT_DIR"; exit 1; }
 
@@ -149,7 +149,22 @@ python scripts/research/audit_strict_tqa_results.py \
   --output "$OUT_DIR/mechanical_audit.json"
 ```
 
-The audit checks record shape, distinct options, answer/choice consistency where applicable, literal text/structure binding, unit roles, chain/atom consistency, locked anchors, trace coverage, and ECM--TLV visual-unit requirements. It is not a semantic, legal, pedagogical, or image-grounding judge; those require documented human/expert review.
+The audit replays record shape, distinct options, answer/choice consistency where applicable, source-bound typed graph nodes and edges, closed-catalog motif predicates, exact restricted-program compiler output, executor-derived answer atoms, construction receipts, program traces, locked graph-node anchors, and the ECM--TLV image-node requirement. It is not a semantic, legal, pedagogical, or image-grounding judge; those require documented human/expert review.
+
+### ECM-TQAG exploratory result (72-cell matrix)
+
+The completed Qwen3.7-plus matrix contains 72 cells. After rerunning the 18 cells belonging to two under-contextualized chunks with an augmented evidence manifest, 60 cells parsed (83.3%) and 12 were rejected (16.7%). The final result is reported with mixed provenance: 54 unaffected cells use the original manifest and 18 rerun cells use the augmented manifest. The two subsets are audited separately against their own manifest digests.
+
+The 12 rejections are classified as follows:
+
+| Scenario | Count | Interpretation |
+|---|---:|---|
+| Insufficient evidence | 5 | The model/planner declined to construct an item from evidence judged inadequate; 4 are from the title/image-only `LUAT CHUNG KHOAN` package. |
+| Non-literal source grounding | 4 | A graph node or anchor paraphrased instead of reproducing a contiguous source span. |
+| ECM answer not bound to executor atom | 2 | The selected option was not mechanically bound to the derived answer atom. |
+| Invalid ECM evidence anchor | 1 | The final anchor did not match the locked graph node. |
+
+These are structural/provenance outcomes, not judgments of legal correctness or educational quality. The detailed mixed-provenance report is maintained locally because raw ledgers, textbook excerpts, and page images are not redistributable.
 
 ## Transparency and citation
 

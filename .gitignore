@@ -78,3 +78,4 @@ research/paper/figures/*.pdf
 
 *.md
 !README.md
+!research/manuscript_ecm_tqag_ictc2026/results_summary.md

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Mechanically audit ECM-TQAG ledgers against frozen evidence.
+"""Mechanically replay ECM-TQAG graph-program ledgers against frozen evidence.
 
 The audit verifies only record/provenance properties that can be checked without
 re-asking a model: package binding, MCQ shape, literal text/structure anchors,
-and ECM planner-to-realizer bindings. It does not judge legal correctness,
+graph validity, motif matching, program execution, atom provenance, and
+planner-to-realizer bindings. It does not judge legal correctness,
 unique-best-answer quality, pedagogy, difficulty, or image-grounding truth.
 """
 from __future__ import annotations
@@ -12,15 +13,25 @@ import argparse
 import hashlib
 import json
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.ecm_graph_program import (  # noqa: E402
+    CONSTRUCTION_FIELDS,
+    anchor_errors,
+    atom_choice_binding,
+    validate_construction,
+)
+
 MANIFEST = ROOT / "research/artifacts/ecm_inputs_8chunks_v3.json"
 METHODS = {"direct", "answer_first", "ecm"}
 CONDITIONS = {"T", "TL_struct", "TLV"}
-ROLES = {"premise", "mapping", "constraint"}
 
 
 def normalize(value: str) -> str:
@@ -36,6 +47,7 @@ def sha256_file(path: Path) -> str:
 
 
 def load_evidence(manifest_path: Path) -> tuple[dict[tuple[str, str], dict[str, Any]], str]:
+    """Return {(chunk_id, condition): {"evidence": ..., "doc_id": ...}} and digest."""
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if manifest.get("schema") != "ecm-tqag.multimodal-inputs.v3":
         raise ValueError("unexpected_manifest_schema")
@@ -47,7 +59,7 @@ def load_evidence(manifest_path: Path) -> tuple[dict[tuple[str, str], dict[str, 
         evidence = package.get("evidence")
         if not isinstance(evidence, dict):
             raise ValueError("invalid_manifest_evidence")
-        evidence_by_cell[key] = evidence
+        evidence_by_cell[key] = {"evidence": evidence, "doc_id": package.get("doc_id")}
     if len(evidence_by_cell) != 24:
         raise ValueError("expected_24_evidence_packages")
     return evidence_by_cell, sha256_file(manifest_path)
@@ -57,155 +69,67 @@ def allowed_sources(condition: str) -> set[str]:
     return {"T": {"text"}, "TL_struct": {"text", "structure"}, "TLV": {"text", "structure", "image"}}[condition]
 
 
-def anchor_errors(anchors: Any, evidence: dict[str, Any], condition: str, label: str) -> list[str]:
-    """Validate non-ECM anchors directly against the frozen package."""
-    errors: list[str] = []
-    allowed = allowed_sources(condition)
-    if not isinstance(anchors, list) or not anchors:
-        return [f"{label}:missing"]
-    for position, entry in enumerate(anchors, 1):
-        where = f"{label}:{position}"
-        if not isinstance(entry, dict) or set(entry) != {"source", "support"}:
-            errors.append(f"{where}:schema")
-            continue
-        source, support = entry.get("source"), entry.get("support")
-        if source not in allowed or not isinstance(support, str) or not support.strip():
-            errors.append(f"{where}:invalid_source_or_support")
-            continue
-        if source == "text" and normalize(support) not in normalize(evidence["text"]):
-            errors.append(f"{where}:text_not_literal")
-        elif source == "structure":
-            title = str(evidence.get("document_structure", {}).get("section_title", ""))
-            if normalize(support) != normalize(title):
-                errors.append(f"{where}:structure_not_section_title")
-        elif source == "image":
-            match = re.search(r"(?:ảnh|image)\s*(\d+)", support, flags=re.I)
-            image_count = len(evidence.get("images", []))
-            if not match or int(match.group(1)) not in range(1, image_count + 1):
-                errors.append(f"{where}:image_order_not_identified")
-    return errors
+# anchor_errors is imported from src.ecm_graph_program so that the runner and
+# this audit enforce byte-identical anchor rules.
 
 
-def ecm_errors(output: dict[str, Any], evidence: dict[str, Any], condition: str) -> list[str]:
-    """Check the v3 locked planner/realizer provenance contract."""
-    errors: list[str] = []
-    units = output.get("evidence_units")
-    plan = output.get("evidence_plan")
-    atoms = output.get("answer_atoms")
-    answer_parts = output.get("answer_parts")
-    if not isinstance(units, list) or len(units) < 2:
-        return ["ecm_units_missing_or_too_short"]
-    if not isinstance(plan, dict):
-        return ["ecm_plan_missing"]
-    if (not isinstance(atoms, list) or not atoms
-            or any(not isinstance(atom, str) or not atom.strip() for atom in atoms)
-            or len({normalize(atom) for atom in atoms}) != len(atoms)):
-        errors.append("ecm_atoms_invalid")
-    if answer_parts != atoms:
-        errors.append("ecm_answer_parts_not_locked_atoms")
+def ecm_errors(output: dict[str, Any], evidence: dict[str, Any], condition: str,
+               source: dict[str, Any] | None = None) -> list[str]:
+    """Replay the v5 graph/rho/motif/program/atom/trace contract and realizer binding."""
+    if not isinstance(output, dict) or not CONSTRUCTION_FIELDS.issubset(output):
+        return ["ecm_construction_missing"]
+    construction = {key: output[key] for key in CONSTRUCTION_FIELDS}
+    errors = [
+        f"ecm_construction:{code}"
+        for code in validate_construction(construction, evidence, condition, source)
+    ]
+    if errors:
+        return errors
 
-    allowed = allowed_sources(condition)
-    structure_title = str(evidence.get("document_structure", {}).get("section_title", ""))
-    image_count = len(evidence.get("images", []))
-    unit_by_id: dict[str, dict[str, str]] = {}
-    for position, unit in enumerate(units, 1):
-        where = f"ecm_unit:{position}"
-        if not isinstance(unit, dict) or set(unit) != {"id", "source", "role", "content"}:
-            errors.append(f"{where}:schema")
-            continue
-        unit_id, source, role, content = unit.get("id"), unit.get("source"), unit.get("role"), unit.get("content")
-        if not isinstance(source, str) or not isinstance(role, str):
-            errors.append(f"{where}:invalid")
-            continue
-        prefix = {"text": "T", "structure": "S", "image": "I"}.get(source)
-        if (not isinstance(unit_id, str) or not prefix or not re.fullmatch(prefix + r"[1-9][0-9]*", unit_id)
-                or unit_id in unit_by_id or source not in allowed or role not in ROLES
-                or not isinstance(content, str) or not content.strip()):
-            errors.append(f"{where}:invalid")
-            continue
-        unit_by_id[unit_id] = {"source": source, "role": role, "content": content}
-        if source == "text" and normalize(content) not in normalize(evidence["text"]):
-            errors.append(f"{where}:text_not_literal")
-        elif source == "structure" and normalize(content) != normalize(structure_title):
-            errors.append(f"{where}:structure_not_section_title")
-        elif source == "image":
-            match = re.search(r"(?:ảnh|image)\s*(\d+)", content, flags=re.I)
-            if not match or int(match.group(1)) not in range(1, image_count + 1):
-                errors.append(f"{where}:image_order_not_identified")
+    atoms = construction["answer_atoms"]
+    expected_ids = [atom["id"] for atom in atoms]
+    expected_values = [atom["value"] for atom in atoms]
+    expected_trace = list(dict.fromkeys(
+        step_id for atom in atoms for step_id in atom["support"]["step_ids"]
+    ))
+    if output.get("answer_atom_ids") != expected_ids:
+        errors.append("ecm_answer_atom_ids_not_locked")
+    if output.get("answer_parts") != expected_values:
+        errors.append("ecm_answer_parts_not_executor_atoms")
+    if output.get("program_trace") != expected_trace:
+        errors.append("ecm_program_trace_not_locked")
 
-    if set(plan) != {"target", "required_units", "chain", "image_necessary"}:
-        return errors + ["ecm_plan_schema"]
-    required = plan.get("required_units")
-    chain = plan.get("chain")
-    if (not isinstance(plan.get("target"), str) or not plan["target"].strip()
-            or not isinstance(required, list) or len(required) < 2 or len(set(required)) != len(required)
-            or any(not isinstance(unit_id, str) or unit_id not in unit_by_id for unit_id in required)
-            or not isinstance(chain, list) or len(chain) < 2 or not isinstance(plan.get("image_necessary"), bool)):
-        return errors + ["ecm_plan_invalid"]
-    required_ids = set(required)
-    if len({unit_by_id[unit_id]["role"] for unit_id in required_ids}) < 2:
-        errors.append("ecm_required_units_same_role")
-
-    referenced: set[str] = set()
-    chain_outputs: set[str] = set()
-    for position, step in enumerate(chain, 1):
-        where = f"ecm_chain:{position}"
-        if (not isinstance(step, dict) or set(step) != {"from", "to"}
-                or not isinstance(step.get("from"), list) or not step["from"]
-                or not isinstance(step.get("to"), str) or not step["to"].strip()
-                or any(not isinstance(unit_id, str) or unit_id not in required_ids for unit_id in step["from"])):
-            errors.append(f"{where}:invalid")
-            continue
-        referenced.update(step["from"])
-        chain_outputs.add(normalize(step["to"]))
-    if referenced != required_ids:
-        errors.append("ecm_required_units_not_covered_by_chain")
-    if isinstance(atoms, list) and not all(isinstance(atom, str) and normalize(atom) in chain_outputs for atom in atoms):
-        errors.append("ecm_atoms_not_derived_from_chain")
-
-    if condition == "TLV":
-        if not plan["image_necessary"] or not any(unit_by_id[unit_id]["source"] == "image" for unit_id in required_ids):
-            errors.append("ecm_tlv_image_not_required")
-    elif plan["image_necessary"]:
-        errors.append("ecm_non_tlv_claims_image")
-
-    trace = output.get("trace")
-    if not isinstance(trace, list) or not trace:
-        errors.append("ecm_trace_missing")
+    choices, answer_index = output.get("choices"), output.get("answer_index")
+    if (len(expected_values) != 1 or not isinstance(choices, list)
+            or isinstance(answer_index, bool) or not isinstance(answer_index, int)
+            or answer_index not in range(len(choices))):
+        errors.append("ecm_selected_choice_not_checkable")
     else:
-        trace_ids: set[str] = set()
-        for position, entry in enumerate(trace, 1):
-            where = f"ecm_trace:{position}"
-            if not isinstance(entry, dict) or set(entry) != {"evidence_id", "supports"}:
-                errors.append(f"{where}:schema")
-                continue
-            evidence_id, support = entry.get("evidence_id"), entry.get("supports")
-            if (not isinstance(evidence_id, str) or evidence_id not in required_ids or evidence_id in trace_ids
-                    or not isinstance(support, str) or not support.strip()):
-                errors.append(f"{where}:invalid")
-                continue
-            trace_ids.add(evidence_id)
-        if trace_ids != required_ids:
-            errors.append("ecm_trace_does_not_cover_required_units")
+        binding = atom_choice_binding(expected_values[0], choices[answer_index])
+        if not binding["ok"]:
+            errors.append("ecm_selected_choice_not_bound_to_atom:" + str(binding["relation"]))
+        elif output.get("atom_choice_binding") not in (None, binding):
+            errors.append("ecm_atom_choice_binding_not_replayable")
 
+    graph_nodes = {node["id"]: node for node in construction["document_graph"]["nodes"]}
+    required_ids = construction["matched_motif"]["bindings"]["evidence_node_ids"]
     anchors = output.get("evidence_anchor")
     if not isinstance(anchors, list) or len(anchors) != len(required_ids):
-        errors.append("ecm_locked_anchor_missing_or_wrong_count")
-        return errors
-    anchor_ids: set[str] = set()
+        return errors + ["ecm_locked_anchor_missing_or_wrong_count"]
+    seen: set[str] = set()
     for position, anchor in enumerate(anchors, 1):
         where = f"ecm_anchor:{position}"
         if not isinstance(anchor, dict) or set(anchor) != {"evidence_id", "source", "support"}:
             errors.append(f"{where}:schema")
             continue
         evidence_id = anchor.get("evidence_id")
-        if (not isinstance(evidence_id, str) or evidence_id not in required_ids or evidence_id in anchor_ids
-                or anchor.get("source") != unit_by_id[evidence_id]["source"]
-                or anchor.get("support") != unit_by_id[evidence_id]["content"]):
-            errors.append(f"{where}:not_locked_unit")
+        if (not isinstance(evidence_id, str) or evidence_id not in required_ids or evidence_id in seen
+                or anchor.get("source") != graph_nodes[evidence_id]["source"]
+                or anchor.get("support") != graph_nodes[evidence_id]["value"]):
+            errors.append(f"{where}:not_locked_node")
             continue
-        anchor_ids.add(evidence_id)
-    if anchor_ids != required_ids:
+        seen.add(evidence_id)
+    if seen != set(required_ids):
         errors.append("ecm_locked_anchor_incomplete")
     return errors
 
@@ -215,9 +139,16 @@ def audit_row(row: dict[str, Any], evidence_by_cell: dict[tuple[str, str], dict[
     method, condition, chunk_id = row.get("method"), row.get("condition"), row.get("chunk_id")
     if method not in METHODS or condition not in CONDITIONS or not isinstance(chunk_id, str):
         return ["invalid_method_or_condition"]
-    evidence = evidence_by_cell.get((chunk_id, condition))
-    if evidence is None:
+    cell = evidence_by_cell.get((chunk_id, condition))
+    if cell is None:
         return ["evidence_missing"]
+    evidence = cell["evidence"]
+    source = {
+        "doc_id": cell["doc_id"],
+        "chunk_id": chunk_id,
+        "condition": condition,
+        "manifest_sha256": manifest_hash,
+    }
     if row.get("source_hash") != manifest_hash:
         errors.append("manifest_hash_mismatch")
     output = row.get("parsed_response")
@@ -237,12 +168,14 @@ def audit_row(row: dict[str, Any], evidence_by_cell: dict[tuple[str, str], dict[
     if method == "answer_first" and output.get("answer") != choices[answer_index]:
         errors.append("answer_first_not_selected_option")
     if method == "ecm":
-        errors.extend(ecm_errors(output, evidence, condition))
+        errors.extend(ecm_errors(output, evidence, condition, source))
     return errors
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Audit evidence-chain TQA records against frozen evidence.")
+    parser = argparse.ArgumentParser(
+        description="Replay graph--motif--program TQA records against frozen evidence."
+    )
     parser.add_argument("--results", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, default=MANIFEST)
     parser.add_argument("--output", type=Path, required=True, help="Must not already exist.")
@@ -265,7 +198,7 @@ def main() -> None:
         })
         all_errors.extend(errors)
     result = {
-        "schema": "ecm-tqag.evidencechain-mechanical-audit.v3",
+        "schema": "ecm-tqag.graph-program-mechanical-audit.v5",
         "status": "PASS" if not all_errors else "FAIL",
         "scope": "Mechanical/provenance audit only: this does not establish semantic correctness, unique-best-answer validity, legal validity, pedagogical quality, or image-grounding truth.",
         "source_results": str(args.results),
