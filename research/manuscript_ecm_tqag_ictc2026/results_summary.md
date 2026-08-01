@@ -1,4 +1,4 @@
-# ECM-TQAG exploratory result summary
+# ECM-TQAG evaluation summary
 
 ## Scope
 
@@ -6,7 +6,7 @@
 - Matrix: 8 chunks × 3 evidence conditions × 3 methods = 72 cells
 - Final parsed: 60/72 (83.3%)
 - Final rejected: 12/72 (16.7%)
-- Rerun: 18 cells from two chunks after context augmentation
+- Context recovery: 18 cells from two chunks were regenerated after adding only demonstrably adjacent context
 
 ## Provenance partitions
 
@@ -27,6 +27,6 @@
 
 The insufficiency cases are evidence-coverage outcomes. The other cases are model-output/contract failures detected by deterministic replay. The two short packages were not padded with unrelated neighbouring text: the French-court package was augmented with its semantically adjacent preceding section, while the securities package remained title-plus-image because no safe adjacent OCR context described that image.
 
-## Release boundary
+## Interpretation and evaluation boundary
 
-The summary is safe for repository documentation. Raw JSONL ledgers, textbook text, and page images remain local and are not uploaded without rights review. A parsed item means only that the structural/provenance contract passed; it does not establish legal correctness, one-best-answer validity, pedagogical quality, or genuine visual necessity.
+This summary reports structural and provenance validity only. A passed item satisfies the formal construction criteria; it does not establish legal correctness, one-best-answer validity, distractor quality, pedagogical usefulness, or genuine visual necessity. Detailed records, textbook text, and page images remain local pending rights review.

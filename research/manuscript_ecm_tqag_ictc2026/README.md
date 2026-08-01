@@ -6,8 +6,8 @@ This archive contains the LaTeX source of the manuscript and its required biblio
 
 - `main.tex` — IEEE conference manuscript source
 - `references.bib` — BibTeX bibliography
-- `ecm_tqag_architecture_v2.pdf` — architecture figure used by `main.tex`
-- `results_summary.md` — non-sensitive summary and rejection taxonomy for the 72-cell exploratory matrix
+- `ecm_tqag_architecture.pdf` — architecture figure used by `main.tex`
+- `results_summary.md` — non-sensitive evaluation summary and rejection taxonomy for the 72-cell matrix
 
 ## Build
 

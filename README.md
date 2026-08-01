@@ -63,7 +63,7 @@ research/artifacts/                            # local, git-ignored manifests
 research/results/                              # local, git-ignored ledgers/audits
 ```
 
-The historical runner filename is retained for compatibility, but it runs either a scoped pilot or the complete matrix.
+The runner filename is retained for compatibility with existing scripts; it supports both a scoped evaluation and the complete matrix.
 
 ### Requirements
 
@@ -112,7 +112,7 @@ python scripts/research/run_qwen37_tqa_pilot.py \
 
 The dry run should report 72 cells and 96 planned calls; it neither reads an API key nor writes a result directory.
 
-### Run frozen chunks to a TQA ledger
+### Run frozen chunks to a results ledger
 
 Set the key in the same terminal that starts the runner; never place it in Git, notebooks, issues, or chat logs.
 
@@ -151,7 +151,7 @@ python scripts/research/audit_strict_tqa_results.py \
 
 The audit replays record shape, distinct options, answer/choice consistency where applicable, source-bound typed graph nodes and edges, closed-catalog motif predicates, exact restricted-program compiler output, executor-derived answer atoms, construction receipts, program traces, locked graph-node anchors, and the ECM--TLV image-node requirement. It is not a semantic, legal, pedagogical, or image-grounding judge; those require documented human/expert review.
 
-### ECM-TQAG exploratory result (72-cell matrix)
+### ECM-TQAG evaluation result (72-cell matrix)
 
 The completed Qwen3.7-plus matrix contains 72 cells. After rerunning the 18 cells belonging to two under-contextualized chunks with an augmented evidence manifest, 60 cells parsed (83.3%) and 12 were rejected (16.7%). The final result is reported with mixed provenance: 54 unaffected cells use the original manifest and 18 rerun cells use the augmented manifest. The two subsets are audited separately against their own manifest digests.
 
@@ -164,7 +164,7 @@ The 12 rejections are classified as follows:
 | ECM answer not bound to executor atom | 2 | The selected option was not mechanically bound to the derived answer atom. |
 | Invalid ECM evidence anchor | 1 | The final anchor did not match the locked graph node. |
 
-These are structural/provenance outcomes, not judgments of legal correctness or educational quality. The detailed mixed-provenance report is maintained locally because raw ledgers, textbook excerpts, and page images are not redistributable.
+These are structural/provenance outcomes, not judgments of legal correctness or educational quality. Detailed records remain local because raw model outputs, textbook excerpts, and page images are not redistributable.
 
 ## Transparency and citation
 

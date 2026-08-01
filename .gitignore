@@ -45,6 +45,11 @@ data/output/processed/
 /research/manuscript_ecm_tqag_ictc2026/*
 !/research/manuscript_ecm_tqag_ictc2026/main.tex
 !/research/manuscript_ecm_tqag_ictc2026/references.bib
+!/research/manuscript_ecm_tqag_ictc2026/README.md
+!/research/manuscript_ecm_tqag_ictc2026/results_summary.md
+!/research/manuscript_ecm_tqag_ictc2026/manuscript_guide.md
+!/research/manuscript_ecm_tqag_ictc2026/ecm_tqag_architecture.pdf
+!/research/manuscript_ecm_tqag_ictc2026/ecm_tqag_data_pipeline.pdf
 /research/artifacts/
 /research/results/
 /research/human_eval/
