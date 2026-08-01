@@ -5,7 +5,7 @@ This repository contains two separate Vietnamese legal-textbook QA tracks:
 - **HOEIT-LegalQA benchmark:** the established Bloom-structured benchmark pipeline. Dataset: [maixuanvan/dhh2026-tqa-output](https://huggingface.co/datasets/maixuanvan/dhh2026-tqa-output).
 - **ECM-TQAG experimental protocol:** a reproducible evidence-chain generation and audit pipeline. Its intended derivative dataset location is [maixuanvan/ECM-TQAG](https://huggingface.co/datasets/maixuanvan/ECM-TQAG), but no ECM artifact is released until generation, quality, and rights gates pass.
 
-The two tracks must not be conflated. HOEIT-LegalQA is an existing benchmark release; ECM-TQAG v3 is a source-bound experiment.
+The two tracks must not be conflated. HOEIT-LegalQA is an established benchmark release; ECM-TQAG is a source-bound experimental study.
 
 > **Release boundary:** this repository does not grant redistribution rights for source textbooks, page images, or raw model ledgers. A parsed ECM record only means its structural/provenance contract passed; it does not prove legal correctness, pedagogical quality, unique-best-answer validity, or visual grounding.
 
@@ -34,7 +34,7 @@ Benchmark preparation is separate: it applies answer normalization, language-san
 
 Accuracy is the proportion of correct held-out MCQ answers. The benchmark compares `None` (question and options only) with `With` (question, options, and gold source context). Context gain is their paired item-level difference in percentage points. Accuracy intervals use Wilson 95% confidence intervals; context-gain intervals use paired differences; p-values use continuity-corrected McNemar tests over discordant outcomes.
 
-## ECM-TQAG v4: graph-program multimodal TQA generation
+## ECM-TQAG: graph-program multimodal TQA generation
 
 ### Method contract
 
@@ -56,7 +56,7 @@ The validator rejects invalid IDs/roles, nodes not bound to frozen evidence, unm
 
 ```text
 scripts/research/build_ecm_8chunk_manifest.py  # builds immutable 8×3 manifest
-scripts/research/run_qwen37_tqa_pilot.py       # scoped pilot or full v4 matrix
+scripts/research/run_qwen37_tqa_pilot.py       # scoped pilot or full matrix
 scripts/research/audit_strict_tqa_results.py   # deterministic provenance audit
 tests/test_qwen37_tqa_pilot.py                 # ECM contract tests
 research/artifacts/                            # local, git-ignored manifests
@@ -97,7 +97,7 @@ The input contract requires exactly eight chunks and T, TL_struct, TLV packages 
 ```bash
 python -m unittest tests/test_qwen37_tqa_pilot.py -v
 
-RUN_ID="qwen37_ecm_graph_program_matrix72_v4_YYYYMMDD"
+RUN_ID="ecm_graph_program_matrix72_YYYYMMDD"
 OUT_DIR="research/results/${RUN_ID}"
 
 python scripts/research/run_qwen37_tqa_pilot.py \
@@ -119,7 +119,7 @@ Set the key in the same terminal that starts the runner; never place it in Git, 
 ```bash
 export OPENROUTER_API_KEY='replace-with-your-local-secret'
 
-RUN_ID="qwen37_ecm_graph_program_matrix72_v4_YYYYMMDD"
+RUN_ID="ecm_graph_program_matrix72_YYYYMMDD"
 OUT_DIR="research/results/${RUN_ID}"
 test ! -e "$OUT_DIR" || { echo "Refusing to overwrite $OUT_DIR"; exit 1; }
 
