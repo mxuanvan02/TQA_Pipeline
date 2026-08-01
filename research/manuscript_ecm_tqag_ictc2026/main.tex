@@ -34,7 +34,7 @@ The contributions are: (i) a source-grounded representation with matched evidenc
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\textwidth]{ecm_tqag_architecture.pdf}
-\caption{ECM-TQAG architecture and data pipeline. Source documents are normalized into fixed multimodal evidence packages. A planner proposes a typed evidence graph and motif request; deterministic matching, compilation, execution, and tracing produce answer atoms and provenance. A question realizer formats the locked construction, after which replay checks structural integrity and the evaluation report aggregates cell outcomes.}
+\caption{ECM-TQAG source-bound construction and replayable evaluation. A fixed multimodal evidence package is mapped to a typed evidence graph, planned by a source-bound motif request, and processed by restricted deterministic derivation to produce answer atoms and a four-option question. Replay audit rebuilds the construction and records per-cell provenance for the $8\times3\times3=72$-cell evaluation across Direct, Answer-first, and ECM-TQAG protocols.}
 \label{fig:architecture}
 \end{figure*}
 \subsection{Document representation and evidence packages}
