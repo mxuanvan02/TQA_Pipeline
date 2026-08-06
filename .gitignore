@@ -99,6 +99,24 @@ research/paper/figures/*.pdf
 !/research/work_ecm24/run_ecm24_matrix.py
 !/research/work_ecm24/ARTIFACTS.md
 !/research/work_ecm24/artifacts_sha256.txt
+# ECM v2/v3 deterministic instrument + v4 cross-modal extension.
+# These are code only: no textbook text, no page images, no API keys. The
+# directory stays deny-by-default (line 90) so evidence manifests and page
+# images can never be pushed by accident -- each publishable file is listed
+# explicitly here.
+!/research/work_ecm24/ecm_v2_core.py
+!/research/work_ecm24/ecm_v3_core.py
+!/research/work_ecm24/run_ecm_v2.py
+!/research/work_ecm24/run_ecm_v3.py
+!/research/work_ecm24/visual_dependence.py
+!/research/work_ecm24/build_ecm24_dataset.py
+# Self-tests: they are the reproducibility claim -- a reviewer can replay the
+# whole deterministic contract without network access or restricted data.
+!/research/work_ecm24/test_ecm_v2_core.py
+!/research/work_ecm24/test_ecm_v3_core.py
+!/research/work_ecm24/test_transport_v3.py
+!/research/work_ecm24/test_crossmodal_v4.py
+!/research/work_ecm24/test_visual_dependence.py
 
 # local backups (never pushed)
 /_backups/
