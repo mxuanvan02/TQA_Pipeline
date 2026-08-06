@@ -1,0 +1,680 @@
+{
+  "schema": "ecm-tqag.multimodal-screening-audit.v1",
+  "created_utc": "2026-08-06T07:43:08.875354+00:00",
+  "source_pool_sha256": "08a36827187f00b9f0e5d2d2d4c5312b3ff3bd0f2d24d9be32565408d8b6ac94",
+  "image_index_size": 14294,
+  "candidates": 24,
+  "accepted": 17,
+  "rejected": 7,
+  "rows": [
+    {
+      "chunk_id": "10. XAY DUNG VAN BAN PHAPLUAT_chunk_178",
+      "doc_id": "10. XAY DUNG VAN BAN PHAPLUAT",
+      "in_legacy_8chunk": false,
+      "text_chars": 2454,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/10. XAY DUNG VAN BAN PHAPLUAT/_page_320_Figure_0.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/10. XAY DUNG VAN BAN PHAPLUAT/_page_320_Figure_0.jpeg",
+          "bytes": 10788,
+          "sha256": "95771296cb0e49455cb30d9b0842ad9dde46251646fa1bcdd3427cc5ac272880",
+          "dimensions": [
+            622,
+            127
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "ACCEPT",
+      "reasons": [],
+      "kept_image_count": 1
+    },
+    {
+      "chunk_id": "15. LUAT THUONG MAI VIET NAM-TAP1_chunk_0",
+      "doc_id": "15. LUAT THUONG MAI VIET NAM-TAP1",
+      "in_legacy_8chunk": false,
+      "text_chars": 215,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/15. LUAT THUONG MAI VIET NAM-TAP1/_page_0_Picture_2.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/15. LUAT THUONG MAI VIET NAM-TAP1/_page_0_Picture_2.jpeg",
+          "bytes": 3613,
+          "sha256": "26e557fd64eb01a3ee189a8f6d9d40af614472316a518ee09bb519cba904db0f",
+          "dimensions": [
+            200,
+            87
+          ],
+          "problems": [
+            "front_cover_artwork_not_content_figure"
+          ],
+          "status": "SCREENED_OUT"
+        }
+      ],
+      "decision": "REJECT",
+      "reasons": [
+        "no_usable_image_after_screening"
+      ]
+    },
+    {
+      "chunk_id": "16. LUAT THUONG MAI VIET NAM-TAPII_chunk_0",
+      "doc_id": "16. LUAT THUONG MAI VIET NAM-TAPII",
+      "in_legacy_8chunk": false,
+      "text_chars": 215,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/16. LUAT THUONG MAI VIET NAM-TAPII/_page_0_Picture_2.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/16. LUAT THUONG MAI VIET NAM-TAPII/_page_0_Picture_2.jpeg",
+          "bytes": 3773,
+          "sha256": "3c4f4d79e8f17cdb86b184c39edde2f409df3b05860ef602eef8d3705aec8fa7",
+          "dimensions": [
+            207,
+            91
+          ],
+          "problems": [
+            "front_cover_artwork_not_content_figure"
+          ],
+          "status": "SCREENED_OUT"
+        }
+      ],
+      "decision": "REJECT",
+      "reasons": [
+        "no_usable_image_after_screening"
+      ]
+    },
+    {
+      "chunk_id": "17,18. LUAT HIEN PHAP VIET NAM_chunk_79",
+      "doc_id": "17,18. LUAT HIEN PHAP VIET NAM",
+      "in_legacy_8chunk": true,
+      "text_chars": 3021,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/17,18. LUAT HIEN PHAP VIET NAM/_page_345_Figure_3.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/17,18. LUAT HIEN PHAP VIET NAM/_page_345_Figure_3.jpeg",
+          "bytes": 109474,
+          "sha256": "98b7971e161b424597789d01453e3a7e666f432a424b8fd6cb87b97856a6ff2f",
+          "dimensions": [
+            917,
+            829
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "ACCEPT",
+      "reasons": [],
+      "kept_image_count": 1
+    },
+    {
+      "chunk_id": "19.LUAT HIEN PHAP NUOC NGOAI_chunk_125",
+      "doc_id": "19.LUAT HIEN PHAP NUOC NGOAI",
+      "in_legacy_8chunk": true,
+      "text_chars": 131,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/19.LUAT HIEN PHAP NUOC NGOAI/_page_248_Figure_1.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/19.LUAT HIEN PHAP NUOC NGOAI/_page_248_Figure_1.jpeg",
+          "bytes": 75299,
+          "sha256": "3d13f866dd4717129c87a64a9887f30cbfe7baedcb40d456cf7f1a177ac16096",
+          "dimensions": [
+            1033,
+            826
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "REJECT",
+      "reasons": [
+        "text_too_short:131<200"
+      ]
+    },
+    {
+      "chunk_id": "19.LUAT HIEN PHAP NUOC NGOAI_chunk_44",
+      "doc_id": "19.LUAT HIEN PHAP NUOC NGOAI",
+      "in_legacy_8chunk": true,
+      "text_chars": 1336,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/19.LUAT HIEN PHAP NUOC NGOAI/_page_76_Figure_1.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/19.LUAT HIEN PHAP NUOC NGOAI/_page_76_Figure_1.jpeg",
+          "bytes": 34195,
+          "sha256": "c18657db4f32e70652abbaf1f9bbe225c8972911241bfbde250e0fe4d417b49c",
+          "dimensions": [
+            963,
+            519
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "ACCEPT",
+      "reasons": [],
+      "kept_image_count": 1
+    },
+    {
+      "chunk_id": "24. LUAT TO TUNG DAN SU VN_chunk_230",
+      "doc_id": "24. LUAT TO TUNG DAN SU VN",
+      "in_legacy_8chunk": false,
+      "text_chars": 3021,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/24. LUAT TO TUNG DAN SU VN/_page_404_Figure_0.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/24. LUAT TO TUNG DAN SU VN/_page_404_Figure_0.jpeg",
+          "bytes": 63682,
+          "sha256": "632db972a038771b7a684f64e50267ea0f9d94367b9375177e24c92200f50372",
+          "dimensions": [
+            899,
+            1481
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "ACCEPT",
+      "reasons": [],
+      "kept_image_count": 1
+    },
+    {
+      "chunk_id": "24. LUAT TO TUNG DAN SU VN_chunk_232",
+      "doc_id": "24. LUAT TO TUNG DAN SU VN",
+      "in_legacy_8chunk": false,
+      "text_chars": 3021,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/24. LUAT TO TUNG DAN SU VN/_page_417_Figure_0.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/24. LUAT TO TUNG DAN SU VN/_page_417_Figure_0.jpeg",
+          "bytes": 55632,
+          "sha256": "15578a0f372d8305e1c00b608b7fb0ae7eb6589cab327ffad3819341745fc1d6",
+          "dimensions": [
+            988,
+            1131
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "ACCEPT",
+      "reasons": [],
+      "kept_image_count": 1
+    },
+    {
+      "chunk_id": "24. LUAT TO TUNG DAN SU VN_chunk_4",
+      "doc_id": "24. LUAT TO TUNG DAN SU VN",
+      "in_legacy_8chunk": false,
+      "text_chars": 3021,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/24. LUAT TO TUNG DAN SU VN/_page_11_Figure_2.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/24. LUAT TO TUNG DAN SU VN/_page_11_Figure_2.jpeg",
+          "bytes": 20697,
+          "sha256": "adc44aabcb72f6a5cc4518efbc7c5f92cf3bab4bc73a7e476615450d1ca42cd2",
+          "dimensions": [
+            512,
+            369
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "ACCEPT",
+      "reasons": [],
+      "kept_image_count": 1
+    },
+    {
+      "chunk_id": "30. LUAT NGAN HANG VIET NAM_chunk_75",
+      "doc_id": "30. LUAT NGAN HANG VIET NAM",
+      "in_legacy_8chunk": true,
+      "text_chars": 953,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/30. LUAT NGAN HANG VIET NAM/_page_206_Figure_3.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/30. LUAT NGAN HANG VIET NAM/_page_206_Figure_3.jpeg",
+          "bytes": 45078,
+          "sha256": "cc1247488fac4dbd0ec4b9e818492065ddc13e8d99cb3b7e0c166e6aca4f9ff7",
+          "dimensions": [
+            885,
+            424
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "ACCEPT",
+      "reasons": [],
+      "kept_image_count": 1
+    },
+    {
+      "chunk_id": "34.LUAT THUONG MAI QUOC TE_chunk_131",
+      "doc_id": "34.LUAT THUONG MAI QUOC TE",
+      "in_legacy_8chunk": false,
+      "text_chars": 3021,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/34.LUAT THUONG MAI QUOC TE/_page_278_Figure_4.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/34.LUAT THUONG MAI QUOC TE/_page_278_Figure_4.jpeg",
+          "bytes": 46555,
+          "sha256": "da0d6ccb07992fd3697a264ff4dda2922d681b4459b6df24d5a58d1212ff629d",
+          "dimensions": [
+            884,
+            525
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "ACCEPT",
+      "reasons": [],
+      "kept_image_count": 1
+    },
+    {
+      "chunk_id": "39. PHAP LUAT SO HUU TRI TUE_chunk_1",
+      "doc_id": "39. PHAP LUAT SO HUU TRI TUE",
+      "in_legacy_8chunk": false,
+      "text_chars": 108,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/39. PHAP LUAT SO HUU TRI TUE/_page_0_Picture_4.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/39. PHAP LUAT SO HUU TRI TUE/_page_0_Picture_4.jpeg",
+          "bytes": 74034,
+          "sha256": "fd856792491af322b402cad77df151e2b17c995272a26c48c1e24f3a23836aa4",
+          "dimensions": [
+            1029,
+            676
+          ],
+          "problems": [
+            "front_cover_artwork_not_content_figure"
+          ],
+          "status": "SCREENED_OUT"
+        }
+      ],
+      "decision": "REJECT",
+      "reasons": [
+        "text_too_short:108<200"
+      ]
+    },
+    {
+      "chunk_id": "4. LICH SU NNUOC & PLUAT VIET NAM_chunk_14",
+      "doc_id": "4. LICH SU NNUOC & PLUAT VIET NAM",
+      "in_legacy_8chunk": false,
+      "text_chars": 3021,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/4. LICH SU NNUOC & PLUAT VIET NAM/_page_33_Figure_4.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/4. LICH SU NNUOC & PLUAT VIET NAM/_page_33_Figure_4.jpeg",
+          "bytes": 73578,
+          "sha256": "6dc61cc74a027b3645b93d847de17925d553aa59ff83538d9efcf17cccc1cb29",
+          "dimensions": [
+            900,
+            605
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "ACCEPT",
+      "reasons": [],
+      "kept_image_count": 1
+    },
+    {
+      "chunk_id": "4. LICH SU NNUOC & PLUAT VIET NAM_chunk_35",
+      "doc_id": "4. LICH SU NNUOC & PLUAT VIET NAM",
+      "in_legacy_8chunk": false,
+      "text_chars": 3021,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/4. LICH SU NNUOC & PLUAT VIET NAM/_page_90_Figure_2.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/4. LICH SU NNUOC & PLUAT VIET NAM/_page_90_Figure_2.jpeg",
+          "bytes": 67965,
+          "sha256": "ded826b516eec28e57fb0a58dc3420c9533107cd655c6b55bedc81f35215350d",
+          "dimensions": [
+            912,
+            629
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "ACCEPT",
+      "reasons": [],
+      "kept_image_count": 1
+    },
+    {
+      "chunk_id": "4. LICH SU NNUOC & PLUAT VIET NAM_chunk_66",
+      "doc_id": "4. LICH SU NNUOC & PLUAT VIET NAM",
+      "in_legacy_8chunk": false,
+      "text_chars": 3021,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/4. LICH SU NNUOC & PLUAT VIET NAM/_page_180_Figure_2.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/4. LICH SU NNUOC & PLUAT VIET NAM/_page_180_Figure_2.jpeg",
+          "bytes": 42288,
+          "sha256": "92d19b29efc727711f1361b853bdd247eb8c64779704a898528f8f9dcebe3b75",
+          "dimensions": [
+            879,
+            490
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "ACCEPT",
+      "reasons": [],
+      "kept_image_count": 1
+    },
+    {
+      "chunk_id": "4. LICH SU NNUOC & PLUAT VIET NAM_chunk_93",
+      "doc_id": "4. LICH SU NNUOC & PLUAT VIET NAM",
+      "in_legacy_8chunk": false,
+      "text_chars": 129,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/4. LICH SU NNUOC & PLUAT VIET NAM/_page_279_Figure_1.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/4. LICH SU NNUOC & PLUAT VIET NAM/_page_279_Figure_1.jpeg",
+          "bytes": 131509,
+          "sha256": "488e13f3a322ac98d951c055ee3f4625def6f33da06c31839afa004c66fe20ed",
+          "dimensions": [
+            920,
+            1339
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "REJECT",
+      "reasons": [
+        "text_too_short:129<200"
+      ]
+    },
+    {
+      "chunk_id": "40. TAM LY HOC TU PHAP_chunk_33",
+      "doc_id": "40. TAM LY HOC TU PHAP",
+      "in_legacy_8chunk": false,
+      "text_chars": 3021,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/40. TAM LY HOC TU PHAP/_page_42_Figure_0.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/40. TAM LY HOC TU PHAP/_page_42_Figure_0.jpeg",
+          "bytes": 46466,
+          "sha256": "abe4bb5bf5b33b6339097e954b3edf531f5112f7b6cd9751aa3d27d9c11f1017",
+          "dimensions": [
+            898,
+            499
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "ACCEPT",
+      "reasons": [],
+      "kept_image_count": 1
+    },
+    {
+      "chunk_id": "40. TAM LY HOC TU PHAP_chunk_74",
+      "doc_id": "40. TAM LY HOC TU PHAP",
+      "in_legacy_8chunk": false,
+      "text_chars": 1195,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/40. TAM LY HOC TU PHAP/_page_97_Figure_8.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/40. TAM LY HOC TU PHAP/_page_97_Figure_8.jpeg",
+          "bytes": 29241,
+          "sha256": "210c41974dee6ae8612647590115b65610b6a43e27f8783aa17c700fe831bf96",
+          "dimensions": [
+            849,
+            205
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "ACCEPT",
+      "reasons": [],
+      "kept_image_count": 1
+    },
+    {
+      "chunk_id": "46. TOI PHAM HOC_chunk_48",
+      "doc_id": "46. TOI PHAM HOC",
+      "in_legacy_8chunk": false,
+      "text_chars": 2196,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/46. TOI PHAM HOC/_page_126_Figure_6.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/46. TOI PHAM HOC/_page_126_Figure_6.jpeg",
+          "bytes": 52878,
+          "sha256": "4ce8b461d7d59433d8c73a60f612f238d54a6a2b43d78a50317384c2bdee4bf4",
+          "dimensions": [
+            918,
+            511
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "ACCEPT",
+      "reasons": [],
+      "kept_image_count": 1
+    },
+    {
+      "chunk_id": "47. LY LUAN DINH TOI DANH_chunk_40",
+      "doc_id": "47. LY LUAN DINH TOI DANH",
+      "in_legacy_8chunk": true,
+      "text_chars": 3021,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/47. LY LUAN DINH TOI DANH/_page_189_Picture_2.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/47. LY LUAN DINH TOI DANH/_page_189_Picture_2.jpeg",
+          "bytes": 54631,
+          "sha256": "674b0eb940334adee46681880f559154ae9a0e073a34f7462192af8fdb855e8b",
+          "dimensions": [
+            1096,
+            799
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "ACCEPT",
+      "reasons": [],
+      "kept_image_count": 1
+    },
+    {
+      "chunk_id": "47. LY LUAN DINH TOI DANH_chunk_50",
+      "doc_id": "47. LY LUAN DINH TOI DANH",
+      "in_legacy_8chunk": true,
+      "text_chars": 3021,
+      "declared_image_count": 3,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/47. LY LUAN DINH TOI DANH/_page_235_Picture_2.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/47. LY LUAN DINH TOI DANH/_page_235_Picture_2.jpeg",
+          "bytes": 51672,
+          "sha256": "40647e2a66f6b9d6bf5bbd25350a11e3f52856ec8f646eef9d8f67896d707789",
+          "dimensions": [
+            1004,
+            720
+          ],
+          "problems": [],
+          "status": "OK"
+        },
+        {
+          "declared_order": 2,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/47. LY LUAN DINH TOI DANH/_page_239_Figure_0.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/47. LY LUAN DINH TOI DANH/_page_239_Figure_0.jpeg",
+          "bytes": 82652,
+          "sha256": "a6e197c575a416a3a62d49e757937297cd9a847a6e90e4e2f9da8b145071dcf1",
+          "dimensions": [
+            1087,
+            893
+          ],
+          "problems": [],
+          "status": "OK"
+        },
+        {
+          "declared_order": 3,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/47. LY LUAN DINH TOI DANH/_page_240_Picture_1.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/47. LY LUAN DINH TOI DANH/_page_240_Picture_1.jpeg",
+          "bytes": 48917,
+          "sha256": "8d75072faa4d78e13c8ce4145c674c2a4c09c68054cc275c0e8e1d9f8cf54889",
+          "dimensions": [
+            1030,
+            721
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "ACCEPT",
+      "reasons": [],
+      "kept_image_count": 3
+    },
+    {
+      "chunk_id": "47. LY LUAN DINH TOI DANH_chunk_9",
+      "doc_id": "47. LY LUAN DINH TOI DANH",
+      "in_legacy_8chunk": true,
+      "text_chars": 3021,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/47. LY LUAN DINH TOI DANH/_page_36_Picture_2.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/47. LY LUAN DINH TOI DANH/_page_36_Picture_2.jpeg",
+          "bytes": 29411,
+          "sha256": "a8f2ec3776c4530d70807d4eddbcb8b993e6e6a5a0bdafc04844e756b443dfd5",
+          "dimensions": [
+            617,
+            627
+          ],
+          "problems": [],
+          "status": "OK"
+        }
+      ],
+      "decision": "ACCEPT",
+      "reasons": [],
+      "kept_image_count": 1
+    },
+    {
+      "chunk_id": "LUAT CHUNG KHOAN_chunk_0",
+      "doc_id": "LUAT CHUNG KHOAN",
+      "in_legacy_8chunk": true,
+      "text_chars": 100,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/LUAT CHUNG KHOAN/_page_0_Picture_3.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/LUAT CHUNG KHOAN/_page_0_Picture_3.jpeg",
+          "bytes": 123492,
+          "sha256": "b973826fcf79f7744966984f7a43c1bb7dc43e82a2b915f2a4220b11e5b2fa31",
+          "dimensions": [
+            1119,
+            762
+          ],
+          "problems": [
+            "front_cover_artwork_not_content_figure"
+          ],
+          "status": "SCREENED_OUT"
+        }
+      ],
+      "decision": "REJECT",
+      "reasons": [
+        "text_too_short:100<200"
+      ]
+    },
+    {
+      "chunk_id": "TLHT PHAP LUAT XUAT NHAP KHAU QUA BIEN GIOI_chunk_0",
+      "doc_id": "TLHT PHAP LUAT XUAT NHAP KHAU QUA BIEN GIOI",
+      "in_legacy_8chunk": false,
+      "text_chars": 80,
+      "declared_image_count": 1,
+      "images": [
+        {
+          "declared_order": 1,
+          "declared_path": "/content/TQA_Pipeline/data/interim/images/TLHT PHAP LUAT XUAT NHAP KHAU QUA BIEN GIOI/_page_0_Picture_0.jpeg",
+          "resolution": "basename+parent",
+          "local_path": "/media/SAS/Van/DeTai2026/TQA_Pipeline/data/output/interim/images/TLHT PHAP LUAT XUAT NHAP KHAU QUA BIEN GIOI/_page_0_Picture_0.jpeg",
+          "bytes": 20107,
+          "sha256": "888aa2f8b06f0445eb1ed453f1c78277c21f7bb817e8e4f5459ce871e6a45d85",
+          "dimensions": [
+            356,
+            352
+          ],
+          "problems": [
+            "front_cover_artwork_not_content_figure"
+          ],
+          "status": "SCREENED_OUT"
+        }
+      ],
+      "decision": "REJECT",
+      "reasons": [
+        "text_too_short:80<200"
+      ]
+    }
+  ]
+}

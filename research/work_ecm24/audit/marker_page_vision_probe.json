@@ -1,0 +1,102 @@
+{
+  "10. XAY DUNG VAN BAN PHAPLUAT_chunk_178": {
+    "doc": "10. XAY DUNG VAN BAN PHAPLUAT",
+    "pages": [
+      {
+        "page": 320,
+        "img": "/media/SAS/Van/DeTai2026/TQA_Pipeline/research/work_ecm24/page_probe/v_10_XAY_DUNG_VAN_BAN_PHAPLUAT_chunk_178_320.jpg",
+        "resp": "```json\n{\"co_hinh_noi_dung\":false,\"loai\":\"logo_bia\",\"mo_ta\":\"Trang thông tin xuất bản, chỉ có logo và thông tin nhà xuất bản\"}\n```"
+      }
+    ]
+  },
+  "17,18. LUAT HIEN PHAP VIET NAM_chunk_79": {
+    "doc": "17,18. LUAT HIEN PHAP VIET NAM",
+    "pages": [
+      {
+        "page": 345,
+        "img": "/media/SAS/Van/DeTai2026/TQA_Pipeline/research/work_ecm24/page_probe/v_17_18_LUAT_HIEN_PHAP_VIET_NAM_chunk_79_345.jpg",
+        "resp": "```json\n{\"co_hinh_noi_dung\":true,\"loai\":\"so_do\",\"mo_ta\":\"Sơ đồ bộ máy nhà nước CHXHCN Việt Nam theo Hiến pháp 2013, các cấp cơ quan\"}\n```"
+      }
+    ]
+  },
+  "19.LUAT HIEN PHAP NUOC NGOAI_chunk_44": {
+    "doc": "19.LUAT HIEN PHAP NUOC NGOAI",
+    "pages": [
+      {
+        "page": 76,
+        "img": "/media/SAS/Van/DeTai2026/TQA_Pipeline/research/work_ecm24/page_probe/v_19_LUAT_HIEN_PHAP_NUOC_NGOAI_chunk_44_76.jpg",
+        "resp": "```json\n{\"co_hinh_noi_dung\":true,\"loai\":\"so_do\",\"mo_ta\":\"Bản đồ thế giới phân loại các mô hình chính thể nhà nước theo màu sắc\"}\n```"
+      }
+    ]
+  },
+  "24. LUAT TO TUNG DAN SU VN_chunk_230": {
+    "doc": "24. LUAT TO TUNG DAN SU VN",
+    "pages": [
+      {
+        "page": 404,
+        "img": "/media/SAS/Van/DeTai2026/TQA_Pipeline/research/work_ecm24/page_probe/v_24_LUAT_TO_TUNG_DAN_SU_VN_chunk_230_404.jpg",
+        "resp": "```json\n{\"co_hinh_noi_dung\":true,\"loai\":\"so_do\",\"mo_ta\":\"Sơ đồ khối các bước quy trình, đánh số từ 1 đến 14.3\"}\n```"
+      }
+    ]
+  },
+  "30. LUAT NGAN HANG VIET NAM_chunk_75": {
+    "doc": "30. LUAT NGAN HANG VIET NAM",
+    "pages": [
+      {
+        "page": 206,
+        "img": "/media/SAS/Van/DeTai2026/TQA_Pipeline/research/work_ecm24/page_probe/v_30_LUAT_NGAN_HANG_VIET_NAM_chunk_75_206.jpg",
+        "resp": "```json\n{\"co_hinh_noi_dung\":true,\"loai\":\"so_do\",\"mo_ta\":\"Sơ đồ quan hệ ba chủ thể bảo lãnh ngân hàng: người bảo lãnh, được bảo lãnh, nhận bảo lãnh\"}\n```"
+      }
+    ]
+  },
+  "34.LUAT THUONG MAI QUOC TE_chunk_131": {
+    "doc": "34.LUAT THUONG MAI QUOC TE",
+    "pages": [
+      {
+        "page": 278,
+        "img": "/media/SAS/Van/DeTai2026/TQA_Pipeline/research/work_ecm24/page_probe/v_34_LUAT_THUONG_MAI_QUOC_TE_chunk_131_278.jpg",
+        "resp": "```json\n{\"co_hinh_noi_dung\":true,\"loai\":\"so_do\",\"mo_ta\":\"Sơ đồ quy trình thanh toán theo phương thức tín dụng chứng từ, các bên liên quan\"}\n```"
+      }
+    ]
+  },
+  "40. TAM LY HOC TU PHAP_chunk_33": {
+    "doc": "40. TAM LY HOC TU PHAP",
+    "pages": [
+      {
+        "page": 42,
+        "img": "/media/SAS/Van/DeTai2026/TQA_Pipeline/research/work_ecm24/page_probe/v_40_TAM_LY_HOC_TU_PHAP_chunk_33_42.jpg",
+        "resp": "```json\n{\"co_hinh_noi_dung\":true,\"loai\":\"so_do\",\"mo_ta\":\"Sơ đồ mối quan hệ giữa các thành phần trong quá trình hoạt động tư pháp\"}\n```"
+      }
+    ]
+  },
+  "40. TAM LY HOC TU PHAP_chunk_74": {
+    "doc": "40. TAM LY HOC TU PHAP",
+    "pages": [
+      {
+        "page": 97,
+        "img": "/media/SAS/Van/DeTai2026/TQA_Pipeline/research/work_ecm24/page_probe/v_40_TAM_LY_HOC_TU_PHAP_chunk_74_97.jpg",
+        "resp": "```json\n{\"co_hinh_noi_dung\":true,\"loai\":\"so_do\",\"mo_ta\":\"Sơ đồ Hình 4 mô tả cấu trúc tâm lý hành vi phạm tội, 4 khối nối tiếp\"}\n```"
+      }
+    ]
+  },
+  "46. TOI PHAM HOC_chunk_48": {
+    "doc": "46. TOI PHAM HOC",
+    "pages": [
+      {
+        "page": 126,
+        "img": "/media/SAS/Van/DeTai2026/TQA_Pipeline/research/work_ecm24/page_probe/v_46_TOI_PHAM_HOC_chunk_48_126.jpg",
+        "resp": "```json\n{\"co_hinh_noi_dung\":true,\"loai\":\"so_do\",\"mo_ta\":\"Sơ đồ mô tả cơ chế tác động của môi trường sống và tình huống cụ thể dẫn đến thực hiện tội phạm\"}\n```"
+      }
+    ]
+  },
+  "47. LY LUAN DINH TOI DANH_chunk_40": {
+    "doc": "47. LY LUAN DINH TOI DANH",
+    "pages": [
+      {
+        "page": 189,
+        "img": "/media/SAS/Van/DeTai2026/TQA_Pipeline/research/work_ecm24/page_probe/v_47_LY_LUAN_DINH_TOI_DANH_chunk_40_189.jpg",
+        "resp": "```json\n{\"co_hinh_noi_dung\":true,\"loai\":\"so_do\",\"mo_ta\":\"Sơ đồ so sánh dấu hiệu cấu thành tội cướp tài sản và tội cố ý gây thương tích\"}\n```"
+      }
+    ]
+  }
+}

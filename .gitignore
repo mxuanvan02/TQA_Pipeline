@@ -84,3 +84,21 @@ research/paper/figures/*.pdf
 *.md
 !README.md
 !research/manuscript_ecm_tqag_ictc2026/results_summary.md
+
+# --- ECM-TQAG ICTC2026 reproducibility artifacts (allowlist) ---
+!/research/work_ecm24/
+/research/work_ecm24/*
+!/research/work_ecm24/audit/
+!/research/work_ecm24/audit/*.json
+!/research/work_ecm24/runs/
+/research/work_ecm24/runs/*
+!/research/work_ecm24/runs/judge_full_sonnet5.jsonl
+!/research/work_ecm24/runs/judge_full_terra.jsonl
+!/research/work_ecm24/stats_tests.py
+!/research/work_ecm24/judge_blinded.py
+!/research/work_ecm24/run_ecm24_matrix.py
+!/research/work_ecm24/ARTIFACTS.md
+!/research/work_ecm24/artifacts_sha256.txt
+
+# local backups (never pushed)
+/_backups/
