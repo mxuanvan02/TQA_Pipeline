@@ -94,6 +94,9 @@ research/paper/figures/*.pdf
 /research/work_ecm24/runs/*
 !/research/work_ecm24/runs/judge_full_sonnet5.jsonl
 !/research/work_ecm24/runs/judge_full_terra.jsonl
+!/research/work_ecm24/runs/vd_v1/
+!/research/work_ecm24/runs/vd_v1/verdicts.json
+!/research/work_ecm24/runs/vd_v1/trials.jsonl
 !/research/work_ecm24/stats_tests.py
 !/research/work_ecm24/judge_blinded.py
 !/research/work_ecm24/run_ecm24_matrix.py
@@ -109,6 +112,7 @@ research/paper/figures/*.pdf
 !/research/work_ecm24/run_ecm_v2.py
 !/research/work_ecm24/run_ecm_v3.py
 !/research/work_ecm24/visual_dependence.py
+!/research/work_ecm24/run_visual_dependence.py
 !/research/work_ecm24/build_ecm24_dataset.py
 # Self-tests: they are the reproducibility claim -- a reviewer can replay the
 # whole deterministic contract without network access or restricted data.
