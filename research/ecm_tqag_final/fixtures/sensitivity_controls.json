@@ -1,0 +1,16 @@
+{
+  "schema": "ecm-tqag.sensitivity-controls.v1",
+  "rendering": {"width": 720, "height": 300, "format": "PNG", "background": "white"},
+  "controls": [
+    {"control_id":"pos01","type":"positive_visual","question":"Biểu đồ cho thấy hình vuông có màu gì?","choices":["đỏ","xanh","vàng","đen"],"answer_index":0,"text":"Trang này chỉ nêu bối cảnh chung và không ghi màu của hình vuông.","image_lines":["HÌNH VUÔNG: MÀU ĐỎ"]},
+    {"control_id":"pos02","type":"positive_visual","question":"Mũi tên trong sơ đồ chỉ theo hướng nào?","choices":["sang phải","sang trái","đi xuống","đi lên"],"answer_index":0,"text":"Phần chữ không mô tả hướng của mũi tên trong sơ đồ.","image_lines":["SƠ ĐỒ: MŨI TÊN → SANG PHẢI"]},
+    {"control_id":"pos03","type":"positive_visual","question":"Ô trung tâm ghi con số nào?","choices":["12","18","24","30"],"answer_index":1,"text":"Văn bản giải thích khái niệm nhưng không chứa con số trong ô trung tâm.","image_lines":["BẢNG: Ô TRUNG TÂM = 18"]},
+    {"control_id":"pos04","type":"positive_visual","question":"Biểu tượng ở đầu hàng là hình gì?","choices":["tam giác","tròn","vuông","sao"],"answer_index":3,"text":"Đoạn chữ không nói biểu tượng đầu hàng có dạng gì.","image_lines":["DÒNG CHÚ THÍCH: HÌNH SAO = MỤC TIÊU"]},
+    {"control_id":"pos05","type":"positive_visual","question":"Nhánh phía dưới nối với nhánh nào?","choices":["nhánh A","nhánh B","nhánh C","nhánh D"],"answer_index":2,"text":"Bản chữ không nêu quan hệ nối giữa các phần của hình.","image_lines":["CẤU TRÚC: NHÁNH DƯỚI → NHÁNH C"]},
+    {"control_id":"neg01","type":"negative_text_sufficient","question":"Theo đoạn chữ, cơ quan nào ban hành quy định?","choices":["Quốc hội","Chính phủ","Tòa án","Bộ trưởng"],"answer_index":0,"text":"Đoạn chữ ghi rõ: Quốc hội ban hành quy định này.","image_lines":["HÌNH MINH HỌA KHÔNG CHỨA ĐÁP ÁN"]},
+    {"control_id":"neg02","type":"negative_text_sufficient","question":"Thời hạn được nêu trong đoạn chữ là bao nhiêu?","choices":["10 ngày","15 ngày","30 ngày","60 ngày"],"answer_index":2,"text":"Đoạn chữ quy định thời hạn là 30 ngày kể từ ngày nhận hồ sơ.","image_lines":["SƠ ĐỒ MINH HỌA"]},
+    {"control_id":"neg03","type":"negative_text_sufficient","question":"Khái niệm nào được định nghĩa trong đoạn chữ?","choices":["hợp đồng","thẩm quyền","chứng cứ","khiếu nại"],"answer_index":1,"text":"Đoạn chữ định nghĩa khái niệm thẩm quyền trong thủ tục.","image_lines":["BẢNG MINH HỌA"]},
+    {"control_id":"neg04","type":"negative_text_sufficient","question":"Điều kiện nào phải được đáp ứng?","choices":["có chữ ký","có con dấu","có người làm chứng","có bản sao"],"answer_index":1,"text":"Điều kiện phải được đáp ứng là hồ sơ có con dấu hợp lệ.","image_lines":["HÌNH TRANG TRÍ"]},
+    {"control_id":"neg05","type":"negative_text_sufficient","question":"Văn bản áp dụng cho đối tượng nào?","choices":["cá nhân","doanh nghiệp","cơ quan nhà nước","tổ chức quốc tế"],"answer_index":1,"text":"Văn bản này áp dụng cho doanh nghiệp hoạt động trong lĩnh vực thương mại.","image_lines":["SƠ ĐỒ KHÔNG LIÊN QUAN"]}
+  ]
+}
