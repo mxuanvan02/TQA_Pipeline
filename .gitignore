@@ -122,30 +122,5 @@ research/paper/figures/*.pdf
 !/research/work_ecm24/test_crossmodal_v4.py
 !/research/work_ecm24/test_visual_dependence.py
 
-# --- ECM-TQAG final six-arm implementation (code-only public release) ---
-# Keep the directory deny-by-default, then allow only source, tests, protocol,
-# and non-sensitive fixtures. Private textbook text/images and run artifacts
-# remain ignored and are distributed only in the private ZIP.
-!/research/ecm_tqag_final/
-/research/ecm_tqag_final/*
-!/research/ecm_tqag_final/ecm_tqag/
-!/research/ecm_tqag_final/ecm_tqag/**/*.py
-!/research/ecm_tqag_final/tests/
-!/research/ecm_tqag_final/tests/**/*.py
-!/research/ecm_tqag_final/fixtures/
-!/research/ecm_tqag_final/fixtures/sensitivity_controls.json
-!/research/ecm_tqag_final/pyproject.toml
-!/research/ecm_tqag_final/run_paid.py
-!/research/ecm_tqag_final/run_smoke.py
-!/research/ecm_tqag_final/dry_run.py
-!/research/ecm_tqag_final/PREREGISTRATION.md
-!/research/ecm_tqag_final/deviations.md
-!/research/ecm_tqag_final/README.md
-/research/ecm_tqag_final/runs/
-/research/ecm_tqag_final/dataset/
-/research/ecm_tqag_final/**/*.jsonl
-/research/ecm_tqag_final/**/*.key
-/research/ecm_tqag_final/**/.env
-
 # local backups (never pushed)
 /_backups/
