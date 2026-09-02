@@ -12,9 +12,17 @@ from urllib.error import HTTPError, URLError
 
 DEFAULT_MODEL = os.environ.get("NINEROUTER_VLM_MODEL", "cx/gpt-4o")
 DEFAULT_ENDPOINT = "http://host.docker.internal:20128/v1"
-ENV_FILES = (Path("/opt/data/.env"), Path("/home/node/.openclaw/.env"),
-             Path("/home/node/.openclaw/workspace/.env"),
-             Path("/Users/van/AI/hermes-stack/config/.env"))
+# Duong dan .env: khai bao qua VLM_ENV_FILE, hoac do theo cac vi tri mac dinh.
+# Khong hard-code duong dan home cua mot may cu the.
+ENV_FILES = tuple(
+    Path(p) for p in (
+        os.environ.get("VLM_ENV_FILE"),
+        Path.cwd() / ".env",
+        Path("/opt/data/.env"),
+        Path.home() / ".config/vlm/.env",
+        Path.home() / "AI/hermes-stack/config/.env",
+    ) if p
+)
 
 def _load_env():
     for p in ENV_FILES:
