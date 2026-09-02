@@ -28,6 +28,14 @@ from tqdm import tqdm
 
 from src.config import CFG, DriveBackupConfig, GPUOptConfig, LLMConfig, PathConfig, QAGConfig
 from src.domain_tags import infer_domain_tag_from_record
+from src.provenance import (
+    DecodingSpec,
+    ModelSpec,
+    PromptSpec,
+    build_run_envelope,
+    hash_text,
+    stamp_record,
+)
 from src.language_sanity import qa_artifact_reasons, sanitize_generated_text
 from src.utils import (
     AsyncDriveWriter,
@@ -486,6 +494,65 @@ def _parse_qa_xml(text: str) -> list[dict[str, Any]]:
 
 
 # ─────────────────────────────────────────────
+# Provenance (audit metadata at generation time)
+# ─────────────────────────────────────────────
+def _build_qag_run_envelope(llm_cfg: LLMConfig, qag_cfg: QAGConfig,
+                            *, use_visual_context: bool,
+                            enforce_legal_syllogism: bool) -> dict[str, Any]:
+    """Capture the run-level provenance envelope for this QAG run.
+
+    Bound once from the effective config so every record of the run shares an
+    identical, machine-readable record of model + decoding + prompt identity.
+    """
+    engine = "vllm" if getattr(llm_cfg, "use_vllm", False) else "huggingface"
+    quant = "awq" if "awq" in llm_cfg.model_name.lower() else (
+        "4bit-nf4" if getattr(llm_cfg, "load_in_4bit", False) else None
+    )
+    repo_root = Path(__file__).resolve().parent.parent
+    return build_run_envelope(
+        stage="stage3_qag",
+        repo_root=repo_root,
+        model=ModelSpec(
+            model_name=llm_cfg.model_name,
+            engine=engine,
+            quantization=quant,
+            provider="local",
+        ),
+        decoding=DecodingSpec(
+            temperature=llm_cfg.temperature,
+            top_p=llm_cfg.top_p,
+            max_new_tokens=llm_cfg.max_new_tokens,
+            repetition_penalty=getattr(llm_cfg, "repetition_penalty", None),
+            do_sample=True,
+            seed=None,  # backend does not expose a fixed seed; sampling is stochastic
+        ),
+        prompt=PromptSpec(
+            system_prompt_sha256=hash_text(SYSTEM_PROMPT),
+            template_sha256=hash_text(QA_GENERATION_TEMPLATE),
+            template_id="qag_bloom_syllogism_v1",
+            enforce_legal_syllogism=enforce_legal_syllogism,
+            use_visual_context=use_visual_context,
+        ),
+        script_path=Path(__file__).name,
+    )
+
+
+def _stamp_all_qa_pairs(qa_pairs: list[dict[str, Any]], run_envelope: dict[str, Any]) -> None:
+    """Attach a per-record provenance stamp to every QA record (in place).
+
+    Stamping happens once, right before persisting, so it covers records from
+    every generation path (vLLM, HF-batch, sequential/per-level fallback, and
+    Drive-cached records) without duplicating logic per branch. Records already
+    stamped (e.g. loaded from cache) are skipped so their original run envelope
+    and hashes are preserved.
+    """
+    for rec in qa_pairs:
+        if rec.get("_provenance"):
+            continue
+        stamp_record(rec, run_envelope, context_text=rec.get("context_text", ""))
+
+
+# ─────────────────────────────────────────────
 # Pipeline Orchestration (Batched)
 # ─────────────────────────────────────────────
 def run_qag(
@@ -542,8 +609,16 @@ def run_qag(
         else:
             new_contexts.append(ctx)
 
+    # Build the run-level provenance envelope once, from the effective config.
+    run_envelope = _build_qag_run_envelope(
+        llm_cfg, qag_cfg,
+        use_visual_context=use_visual_context,
+        enforce_legal_syllogism=enforce_legal_syllogism,
+    )
+
     if not new_contexts:
         log.info("All %d contexts already processed (loaded from Drive cache)", len(contexts))
+        _stamp_all_qa_pairs(all_qa_pairs, run_envelope)
         save_json(all_qa_pairs, paths.raw_qa_pairs)
         return all_qa_pairs
 
@@ -795,6 +870,9 @@ def run_qag(
         
     # Free GPU
     generator.unload()
+
+    # Stamp provenance on every record (covers all generation paths) then save.
+    _stamp_all_qa_pairs(all_qa_pairs, run_envelope)
 
     # Save output
     save_json(all_qa_pairs, paths.raw_qa_pairs)

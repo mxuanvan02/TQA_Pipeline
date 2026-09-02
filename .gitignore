@@ -124,3 +124,13 @@ research/paper/figures/*.pdf
 
 # local backups (never pushed)
 /_backups/
+
+# submission artifacts: ban thao, template tap chi, bai da xuat ban (co ban quyen)
+# -> repo nay la PUBLIC, khong day cac muc nay len
+/submission_hujos/
+/manuscript/
+/slides/
+
+# agent / runtime state (khong phai ma nguon)
+/.pi-subagents/
+/state/
