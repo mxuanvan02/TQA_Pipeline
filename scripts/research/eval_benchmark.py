@@ -531,7 +531,7 @@ def run_eval(
 
     if use_api or "http" in model_id:
         print(f"[INFO] Using API mode for {model_id}")
-        _api_base = api_base or "http://10.9.5.18:1234/v1"
+        _api_base = api_base or os.getenv("BENCHMARK_API_BASE", "http://localhost:1234/v1")
         _api_key = api_key or os.getenv("BENCHMARK_API_KEY", "")
         client = _init_api_client(_api_base, _api_key)
         if client:
