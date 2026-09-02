@@ -214,6 +214,9 @@ def _init_llm(
 
 
 def _init_api_client(api_base: str, api_key: str):
+    if not api_key:
+        print("[ERROR] Missing API key. Set BENCHMARK_API_KEY or pass --api-key.")
+        return None
     try:
         from openai import OpenAI
         return OpenAI(base_url=api_base, api_key=api_key)
@@ -529,7 +532,7 @@ def run_eval(
     if use_api or "http" in model_id:
         print(f"[INFO] Using API mode for {model_id}")
         _api_base = api_base or "http://10.9.5.18:1234/v1"
-        _api_key = api_key or "sk-tqa-benchmark-2026-v1"
+        _api_key = api_key or os.getenv("BENCHMARK_API_KEY", "")
         client = _init_api_client(_api_base, _api_key)
         if client:
             llm = APIModelWrapper(client, model_id)
@@ -602,7 +605,10 @@ def run_eval(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Zero-shot MCQ Benchmark for DHH-LegalQA.")
     parser.add_argument("--dataset", type=Path, required=True, help="Path to dataset.jsonl")
-    parser.add_argument("--model", type=str, default="Qwen/Qwen2.5-7B-Instruct", help="vLLM model ID")
+    parser.add_argument("--model", type=str, default="groq/qwen/qwen3-32b",
+                        help="Model id under evaluation. Default = first benchmark subject "
+                             "(see config.ModelRolesConfig.benchmark_subjects); must NOT be the "
+                             "generator/judge model. vLLM ids still accepted for local runs.")
     parser.add_argument("--out-dir", type=Path, default=Path("research/results/benchmarks"), help="Output directory")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of samples")
     parser.add_argument("--gpu-util", type=float, default=0.90, help="VRAM reservation")
@@ -615,7 +621,7 @@ if __name__ == "__main__":
     parser.add_argument("--run-name", type=str, default=None, help="Optional output stem override")
     parser.add_argument("--use-api", action="store_true", help="Use OpenAI-compatible API instead of local vLLM")
     parser.add_argument("--api-base", type=str, default=os.getenv("BENCHMARK_API_BASE", "http://localhost:1234/v1"), help="API base URL")
-    parser.add_argument("--api-key", type=str, default=os.getenv("BENCHMARK_API_KEY", "sk-tqa-benchmark-2026-v1"), help="API key")
+    parser.add_argument("--api-key", type=str, default=os.getenv("BENCHMARK_API_KEY", ""), help="API key")
     parser.add_argument("--max-context-chars", type=int, default=2000, help="Maximum characters from context to include in with-context prompts")
     
     args = parser.parse_args()

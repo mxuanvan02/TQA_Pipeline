@@ -156,10 +156,103 @@ class BenchmarkConfig:
         default_factory=lambda: os.environ.get("BENCHMARK_API_BASE", "http://localhost:1234/v1")
     )
     api_key: str = field(
-        default_factory=lambda: os.environ.get("BENCHMARK_API_KEY", "sk-tqa-benchmark-2026-v1")
+        default_factory=lambda: os.environ.get("BENCHMARK_API_KEY", "")
     )
     max_tokens: int = 16
     temperature: float = 0.0
+
+
+# ─────────────────────────────────────────────
+# 2b · Model-Role Assignment (leakage-safe)
+# ─────────────────────────────────────────────
+@dataclass(frozen=True)
+class ModelRolesConfig:
+    """Central, leakage-safe assignment of a concrete model to each pipeline role.
+
+    Scientific constraint (why this is one place, not scattered defaults):
+      In a synthetic benchmark, the model that GENERATES data, the model that
+      JUDGES/filters it, and the models that are BENCHMARKED must be mutually
+      distinct. Any overlap creates self-reinforcement (judge favors its own
+      family) or home-advantage (a benchmarked model graded its own output),
+      which a reviewer will flag. Keeping every role here makes that separation
+      auditable at a glance and keeps it in sync with the manuscript.
+
+    Defaults target the 9Router gateway (OpenAI-compatible) so no GPU is needed;
+    every field is env-overridable for reproducible runs on other endpoints.
+    Model ids are gateway route ids; ``*_paper`` fields are the human-facing
+    names used verbatim in the manuscript so code and paper never drift.
+    """
+
+    # Gateway shared by all API-served roles (host view of 9Router).
+    gateway_base: str = field(
+        default_factory=lambda: os.environ.get(
+            "TQA_GATEWAY_BASE", "http://127.0.0.1:20128/v1"
+        )
+    )
+
+    # Stage 3 — QA generation (text). Was Qwen2.5-7B-AWQ (produced CJK/label bugs).
+    generator: str = field(
+        default_factory=lambda: os.environ.get(
+            "TQA_GENERATOR_MODEL", "groq/llama-3.1-8b-instant"
+        )
+    )
+    generator_paper: str = "Llama-3.1-8B-Instruct"
+
+    # Stage 4 — QA judge/filter (text). MUST differ in family from the generator.
+    judge: str = field(
+        default_factory=lambda: os.environ.get(
+            "TQA_JUDGE_MODEL", "groq/openai/gpt-oss-20b"
+        )
+    )
+    judge_paper: str = "GPT-OSS-20B"
+
+    # Tier B — process-graph extraction (vision). Multiple VLMs compared (T1).
+    vision_extractors: tuple[str, ...] = (
+        "vx/gemini-2.5-flash",
+        "cf/@cf/mistralai/mistral-small-3.1-24b-instruct",
+        "if/qwen3-vl-plus",
+    )
+    vision_extractors_paper: tuple[str, ...] = (
+        "Gemini-2.5-Flash",
+        "Mistral-Small-3.1-24B",
+        "Qwen3-VL",
+    )
+
+    # Tier C — graph reasoning / answer verbalization (text).
+    reasoner: str = field(
+        default_factory=lambda: os.environ.get(
+            "TQA_REASONER_MODEL", "groq/llama-3.3-70b-versatile"
+        )
+    )
+    reasoner_paper: str = "Llama-3.3-70B-Instruct"
+
+    # Benchmark subjects (models under evaluation). Excludes generator+judge to
+    # avoid home-advantage; spread across families for a fair leaderboard.
+    benchmark_subjects: tuple[str, ...] = (
+        "groq/qwen/qwen3-32b",
+        "cf/@cf/mistralai/mistral-small-3.1-24b-instruct",
+        "groq/openai/gpt-oss-120b",
+        "vx/gemini-2.5-flash",
+        "cf/@cf/meta/llama-3.2-3b-instruct",
+    )
+    benchmark_subjects_paper: tuple[str, ...] = (
+        "Qwen3-32B",
+        "Mistral-Small-3.1-24B",
+        "GPT-OSS-120B",
+        "Gemini-2.5-Flash",
+        "Llama-3.2-3B",
+    )
+
+    def assert_no_leakage(self) -> list[str]:
+        """Return a list of leakage violations (empty = safe). Cheap, no I/O."""
+        problems: list[str] = []
+        if self.generator == self.judge:
+            problems.append("generator == judge (self-reinforcement)")
+        if self.generator in self.benchmark_subjects:
+            problems.append("generator is also a benchmark subject (home-advantage)")
+        if self.judge in self.benchmark_subjects:
+            problems.append("judge is also a benchmark subject (home-advantage)")
+        return problems
 
 
 # ─────────────────────────────────────────────
@@ -472,6 +565,7 @@ class PipelineConfig:
     drive_backup: DriveBackupConfig = field(default_factory=DriveBackupConfig)
     gpu: GPUOptConfig = field(default_factory=GPUOptConfig)
     benchmark: BenchmarkConfig = field(default_factory=BenchmarkConfig)
+    model_roles: ModelRolesConfig = field(default_factory=ModelRolesConfig)
 
 
 # Instantiate the global config
