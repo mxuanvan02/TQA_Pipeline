@@ -1,20 +1,14 @@
 """
 Stage 3 — Synthetic Question-Answer Generation (QAG)
 =====================================================
-Who:    Qwen2.5-0.5B-Instruct (or 1.5B) loaded in 4-bit.
+Who:    The configured Stage-3 text generator.
 Where:  Reads data/interim/multimodal_contexts.json
         Writes data/interim/raw_qa_pairs.json
 How:    For each context chunk, prompts the LLM to generate QA pairs at
         three Bloom's Taxonomy levels using Legal Syllogism reasoning.
-        Uses BATCHED inference to maximize GPU L4 utilization.
+        Uses batched inference for throughput.
 Input:  multimodal_contexts.json (list of chunk records from Stage 2).
 Output: raw_qa_pairs.json (list of QA records with rationale).
-
-GPU Optimization (L4 — 22.5 GB VRAM):
-    - 4-bit Qwen-0.5B uses ~400 MB VRAM → massive headroom for batching
-    - Batch size 16: tokenize + generate 16 prompts simultaneously
-    - Left-padding for causal LM batched generation
-    - ThreadPool prefetch for I/O-bound prompt preparation
 """
 
 from __future__ import annotations
@@ -33,6 +27,16 @@ import torch
 from tqdm import tqdm
 
 from src.config import CFG, DriveBackupConfig, GPUOptConfig, LLMConfig, PathConfig, QAGConfig
+from src.domain_tags import infer_domain_tag_from_record
+from src.provenance import (
+    DecodingSpec,
+    ModelSpec,
+    PromptSpec,
+    build_run_envelope,
+    hash_text,
+    stamp_record,
+)
+from src.language_sanity import qa_artifact_reasons, sanitize_generated_text
 from src.utils import (
     AsyncDriveWriter,
     batched,
@@ -83,6 +87,9 @@ at the Bloom's Taxonomy level: **{bloom_level}**.
    - **Minor Premise**: The specific facts of the question scenario.
    - **Conclusion**: The logical deduction from the premises.
 4. Questions and answers must be in Vietnamese.
+5. Do NOT use English or Chinese in any field.
+6. Do NOT copy the instructions, XML examples, or meta commentary into the answer.
+7. Do NOT append notes such as "(full correct answer text)".
 
 ## Output Format (strict XML tags):
 For each question, wrap the output EXACTLY like this:
@@ -95,7 +102,7 @@ B. ...
 C. ...
 D. ...
 </candidate_answers>
-<ground_truth>A. ... (full correct answer text)</ground_truth>
+<ground_truth>A. ...</ground_truth>
 <legal_rationale>Đại tiền đề: ... Tiểu tiền đề: ... Kết luận: ...</legal_rationale>
 </qa_pair>
 
@@ -114,9 +121,17 @@ class QAGenerator:
     Fallback: HuggingFace generate() with batched evaluation.
     """
 
-    def __init__(self, cfg: LLMConfig, gpu_cfg: GPUOptConfig | None = None) -> None:
+    def __init__(
+        self,
+        cfg: LLMConfig,
+        gpu_cfg: GPUOptConfig | None = None,
+        use_visual_context: bool = True,
+        enforce_legal_syllogism: bool = True,
+    ) -> None:
         self.cfg = cfg
         self.gpu_cfg = gpu_cfg or CFG.gpu
+        self.use_visual_context = use_visual_context
+        self.enforce_legal_syllogism = enforce_legal_syllogism
         self._model = None
         self._tokenizer = None
         self._vllm_engine = None
@@ -144,7 +159,9 @@ class QAGenerator:
 
         from vllm import LLM, SamplingParams
 
-        quantization = "awq" if self.cfg.load_in_4bit else None
+        # Autodetect AWQ: vLLM only supports 'awq' if it is pre-quantized in the repo
+        model_is_awq = "awq" in self.cfg.model_name.lower()
+        quantization = "awq" if model_is_awq else None
         
         self._vllm_engine = LLM(
             model=self.cfg.model_name,
@@ -211,13 +228,23 @@ class QAGenerator:
     ) -> str:
         """Build a fully-formatted prompt string for one context + bloom level."""
         visual_ctx = ""
-        if context.get("visual_descriptions"):
+        if self.use_visual_context and context.get("visual_descriptions"):
             descs = [d.get("summary", "") for d in context["visual_descriptions"]]
             visual_ctx = "## Visual Information:\n" + "\n".join(
                 f"- Image: {d}" for d in descs if d
             )
 
-        user_prompt = QA_GENERATION_TEMPLATE.format(
+        template = QA_GENERATION_TEMPLATE
+        if not self.enforce_legal_syllogism:
+            template = template.replace(
+                "3. Structure the rationale using **Legal Syllogism**:\n"
+                "   - **Major Premise**: The general legal rule/article.\n"
+                "   - **Minor Premise**: The specific facts of the question scenario.\n"
+                "   - **Conclusion**: The logical deduction from the premises.\n",
+                "3. Provide a concise legal rationale grounded in the context.\n",
+            )
+
+        user_prompt = template.format(
             n_questions=n_questions,
             bloom_level=bloom_level,
             context_text=context["text"][:2000],
@@ -265,7 +292,6 @@ class QAGenerator:
         GPU Optimization:
             - Tokenizes all prompts together with padding
             - Runs model.generate() once for the entire batch
-            - L4 with 4-bit Qwen-0.5B can handle batch_size=16-32 easily
         """
         self._load()
 
@@ -418,7 +444,7 @@ def _parse_qa_xml(text: str) -> list[dict[str, Any]]:
     Extract QA pairs from LLM XML output via Regex.
 
     How:  Finds all <qa_pair> blocks and extracts nested tags.
-          More stable than JSON parsing for 0.5B models.
+          More stable than JSON parsing for the current prompt format.
     """
     pairs: list[dict[str, Any]] = []
 
@@ -445,17 +471,85 @@ def _parse_qa_xml(text: str) -> list[dict[str, Any]]:
             if len(candidates) < 2:
                 candidates = lines
 
+            question = sanitize_generated_text(q_match.group(1))
+            candidates = [sanitize_generated_text(x) for x in candidates]
+            ground_truth = sanitize_generated_text(gt_match.group(1))
+            legal_rationale = sanitize_generated_text(lr_match.group(1))
+            artifact_reasons = qa_artifact_reasons(question, candidates, ground_truth, legal_rationale)
+            if artifact_reasons:
+                log.debug("  Dropped QA pair with foreign/prompt artifacts: %s", ", ".join(artifact_reasons))
+                continue
+
             pairs.append({
-                "question": q_match.group(1).strip(),
+                "question": question,
                 "candidate_answers": candidates,
-                "ground_truth": gt_match.group(1).strip(),
-                "legal_rationale": lr_match.group(1).strip(),
+                "ground_truth": ground_truth,
+                "legal_rationale": legal_rationale,
             })
 
     if not pairs:
         log.debug("  Could not parse QA XML: %s...", text[:100])
 
     return pairs
+
+
+# ─────────────────────────────────────────────
+# Provenance (audit metadata at generation time)
+# ─────────────────────────────────────────────
+def _build_qag_run_envelope(llm_cfg: LLMConfig, qag_cfg: QAGConfig,
+                            *, use_visual_context: bool,
+                            enforce_legal_syllogism: bool) -> dict[str, Any]:
+    """Capture the run-level provenance envelope for this QAG run.
+
+    Bound once from the effective config so every record of the run shares an
+    identical, machine-readable record of model + decoding + prompt identity.
+    """
+    engine = "vllm" if getattr(llm_cfg, "use_vllm", False) else "huggingface"
+    quant = "awq" if "awq" in llm_cfg.model_name.lower() else (
+        "4bit-nf4" if getattr(llm_cfg, "load_in_4bit", False) else None
+    )
+    repo_root = Path(__file__).resolve().parent.parent
+    return build_run_envelope(
+        stage="stage3_qag",
+        repo_root=repo_root,
+        model=ModelSpec(
+            model_name=llm_cfg.model_name,
+            engine=engine,
+            quantization=quant,
+            provider="local",
+        ),
+        decoding=DecodingSpec(
+            temperature=llm_cfg.temperature,
+            top_p=llm_cfg.top_p,
+            max_new_tokens=llm_cfg.max_new_tokens,
+            repetition_penalty=getattr(llm_cfg, "repetition_penalty", None),
+            do_sample=True,
+            seed=None,  # backend does not expose a fixed seed; sampling is stochastic
+        ),
+        prompt=PromptSpec(
+            system_prompt_sha256=hash_text(SYSTEM_PROMPT),
+            template_sha256=hash_text(QA_GENERATION_TEMPLATE),
+            template_id="qag_bloom_syllogism_v1",
+            enforce_legal_syllogism=enforce_legal_syllogism,
+            use_visual_context=use_visual_context,
+        ),
+        script_path=Path(__file__).name,
+    )
+
+
+def _stamp_all_qa_pairs(qa_pairs: list[dict[str, Any]], run_envelope: dict[str, Any]) -> None:
+    """Attach a per-record provenance stamp to every QA record (in place).
+
+    Stamping happens once, right before persisting, so it covers records from
+    every generation path (vLLM, HF-batch, sequential/per-level fallback, and
+    Drive-cached records) without duplicating logic per branch. Records already
+    stamped (e.g. loaded from cache) are skipped so their original run envelope
+    and hashes are preserved.
+    """
+    for rec in qa_pairs:
+        if rec.get("_provenance"):
+            continue
+        stamp_record(rec, run_envelope, context_text=rec.get("context_text", ""))
 
 
 # ─────────────────────────────────────────────
@@ -468,6 +562,8 @@ def run_qag(
     drive_cfg: DriveBackupConfig | None = None,
     gpu_cfg: GPUOptConfig | None = None,
     limit: int | None = None,
+    use_visual_context: bool = True,
+    enforce_legal_syllogism: bool = True,
 ) -> list[dict[str, Any]]:
     """
     Generate QA pairs for all contexts across all Bloom levels.
@@ -479,9 +575,9 @@ def run_qag(
     Output: raw_qa_pairs.json — enriched QA records.
 
     GPU Optimization:
-        - Processes contexts in batches of qag_cfg.batch_size (default 16)
+        - Processes contexts in batches of qag_cfg.batch_size
         - Each batch generates for one Bloom level at a time
-        - Drive checkpointing per-chunk (survives Colab disconnects)
+        - Optional checkpointing can persist intermediate progress
     """
     paths = paths or CFG.paths
     llm_cfg = llm_cfg or CFG.llm
@@ -513,8 +609,16 @@ def run_qag(
         else:
             new_contexts.append(ctx)
 
+    # Build the run-level provenance envelope once, from the effective config.
+    run_envelope = _build_qag_run_envelope(
+        llm_cfg, qag_cfg,
+        use_visual_context=use_visual_context,
+        enforce_legal_syllogism=enforce_legal_syllogism,
+    )
+
     if not new_contexts:
         log.info("All %d contexts already processed (loaded from Drive cache)", len(contexts))
+        _stamp_all_qa_pairs(all_qa_pairs, run_envelope)
         save_json(all_qa_pairs, paths.raw_qa_pairs)
         return all_qa_pairs
 
@@ -523,7 +627,12 @@ def run_qag(
         len(new_contexts), qag_cfg.batch_size, len(contexts) - len(new_contexts),
     )
 
-    generator = QAGenerator(llm_cfg, gpu_cfg)
+    generator = QAGenerator(
+        llm_cfg,
+        gpu_cfg,
+        use_visual_context=use_visual_context,
+        enforce_legal_syllogism=enforce_legal_syllogism,
+    )
     generator._load()  # Pre-load LLM + tokenizer (needed by _build_prompt)
     batch_count = 0
     total_batches = (len(new_contexts) + qag_cfg.batch_size - 1) // qag_cfg.batch_size
@@ -585,11 +694,14 @@ def run_qag(
 
                             for i, qa in enumerate(qa_list):
                                 qa_id = f"{chunk_id}_{bloom_level.lower()}_{i}"
+                                domain_tag = infer_domain_tag_from_record(
+                                    {"doc_id": doc_id, "chunk_id": chunk_id, "qa_id": qa_id}
+                                )
                                 enriched = {
                                     "qa_id": qa_id,
                                     "doc_id": doc_id,
                                     "chunk_id": chunk_id,
-                                    "domain_tag": "civil_law",
+                                    "domain_tag": domain_tag,
                                     "bloom_level": bloom_level,
                                     "context_text": ctx.get("text", ""),
                                     "context_visuals": ctx.get("image_paths", []),
@@ -645,11 +757,14 @@ def run_qag(
 
                                 for i, qa in enumerate(qa_list):
                                     qa_id = f"{chunk_id}_{bloom_level.lower()}_{i}"
+                                    domain_tag = infer_domain_tag_from_record(
+                                        {"doc_id": doc_id, "chunk_id": chunk_id, "qa_id": qa_id}
+                                    )
                                     enriched = {
                                         "qa_id": qa_id,
                                         "doc_id": doc_id,
                                         "chunk_id": chunk_id,
-                                        "domain_tag": "civil_law",
+                                        "domain_tag": domain_tag,
                                         "bloom_level": bloom_level,
                                         "context_text": ctx.get("text", ""),
                                         "context_visuals": ctx.get("image_paths", []),
@@ -677,9 +792,12 @@ def run_qag(
                             doc_id = ctx.get("doc_id", "unknown")
                             for i, qa in enumerate(qa_list):
                                 qa_id = f"{chunk_id}_{bloom_level.lower()}_{i}"
+                                domain_tag = infer_domain_tag_from_record(
+                                    {"doc_id": doc_id, "chunk_id": chunk_id, "qa_id": qa_id}
+                                )
                                 enriched = {
                                     "qa_id": qa_id, "doc_id": doc_id,
-                                    "chunk_id": chunk_id, "domain_tag": "civil_law",
+                                    "chunk_id": chunk_id, "domain_tag": domain_tag,
                                     "bloom_level": bloom_level,
                                     "context_text": ctx.get("text", ""),
                                     "context_visuals": ctx.get("image_paths", []),
@@ -705,9 +823,12 @@ def run_qag(
                     doc_id = ctx.get("doc_id", "unknown")
                     for i, qa in enumerate(qa_list):
                         qa_id = f"{chunk_id}_{bloom_level.lower()}_{i}"
+                        domain_tag = infer_domain_tag_from_record(
+                            {"doc_id": doc_id, "chunk_id": chunk_id, "qa_id": qa_id}
+                        )
                         enriched = {
                             "qa_id": qa_id, "doc_id": doc_id,
-                            "chunk_id": chunk_id, "domain_tag": "civil_law",
+                            "chunk_id": chunk_id, "domain_tag": domain_tag,
                             "bloom_level": bloom_level,
                             "context_text": ctx.get("text", ""),
                             "context_visuals": ctx.get("image_paths", []),
@@ -750,6 +871,9 @@ def run_qag(
     # Free GPU
     generator.unload()
 
+    # Stamp provenance on every record (covers all generation paths) then save.
+    _stamp_all_qa_pairs(all_qa_pairs, run_envelope)
+
     # Save output
     save_json(all_qa_pairs, paths.raw_qa_pairs)
 
@@ -782,17 +906,48 @@ def main() -> None:
         "--batch-size", type=int, default=None,
         help="Override batch size (default: from config)",
     )
+    parser.add_argument(
+        "--text-only",
+        action="store_true",
+        help="Ablation: disable visual context in prompts",
+    )
+    parser.add_argument(
+        "--no-legal-syllogism",
+        action="store_true",
+        help="Ablation: remove explicit legal syllogism constraint",
+    )
+    parser.add_argument(
+        "--model-name",
+        type=str,
+        default=None,
+        help="Override LLM model name for generation",
+    )
     args = parser.parse_args()
 
     log.info("Stage 3 -- Synthetic QAG Pipeline (Batched)")
 
+    from dataclasses import replace
+    llm_cfg = CFG.llm
+    if args.model_name:
+        llm_cfg = replace(llm_cfg, model_name=args.model_name)
+
     # Override batch size from CLI if provided
     if args.batch_size:
-        from dataclasses import replace
         qag_cfg = replace(CFG.qag, batch_size=args.batch_size)
-        results = run_qag(limit=args.limit, qag_cfg=qag_cfg)
+        results = run_qag(
+            limit=args.limit,
+            llm_cfg=llm_cfg,
+            qag_cfg=qag_cfg,
+            use_visual_context=not args.text_only,
+            enforce_legal_syllogism=not args.no_legal_syllogism,
+        )
     else:
-        results = run_qag(limit=args.limit)
+        results = run_qag(
+            limit=args.limit,
+            llm_cfg=llm_cfg,
+            use_visual_context=not args.text_only,
+            enforce_legal_syllogism=not args.no_legal_syllogism,
+        )
 
     if not results:
         log.warning("No QA pairs generated. Check multimodal_contexts.json.")

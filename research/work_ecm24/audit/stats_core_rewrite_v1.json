@@ -1,0 +1,122 @@
+{
+  "schema": "ecm-tqag.stats.core-rewrite.v1",
+  "created_utc": "2026-08-07T08:35:53.423785+00:00",
+  "construction_side": {
+    "source": "runs/full_v4/results.jsonl",
+    "n_cells": 48,
+    "n_chunks": 16,
+    "generator": "qwen/qwen3-vl-32b-instruct",
+    "seed": 20260806,
+    "pass_rate_by_condition": {
+      "T": {
+        "n_parsed": 6,
+        "n_cells": 16,
+        "rate": 0.375,
+        "wilson95": [
+          0.1848,
+          0.6136
+        ]
+      },
+      "TL_struct": {
+        "n_parsed": 6,
+        "n_cells": 16,
+        "rate": 0.375,
+        "wilson95": [
+          0.1848,
+          0.6136
+        ]
+      },
+      "TLV": {
+        "n_parsed": 8,
+        "n_cells": 16,
+        "rate": 0.5,
+        "wilson95": [
+          0.28,
+          0.72
+        ]
+      }
+    },
+    "mcnemar_exact_paired": {
+      "TLV_vs_T": {
+        "n_pairs": 16,
+        "only_TLV": 5,
+        "only_T": 3,
+        "p_exact": 0.7266
+      },
+      "TLV_vs_TL_struct": {
+        "n_pairs": 16,
+        "only_TLV": 5,
+        "only_TL_struct": 3,
+        "p_exact": 0.7266
+      },
+      "TL_struct_vs_T": {
+        "n_pairs": 16,
+        "only_TL_struct": 1,
+        "only_T": 1,
+        "p_exact": 1.0
+      }
+    },
+    "reject_families_by_condition": {
+      "T|stage1:compile": 1,
+      "T|stage1:exec": 8,
+      "T|stage2:anti_verbatim": 1,
+      "TLV|stage1:compile": 1,
+      "TLV|stage1:exec": 1,
+      "TLV|stage1:invalid_json": 6,
+      "TL_struct|stage1:exec": 9,
+      "TL_struct|stage2:anti_verbatim": 1
+    },
+    "note": "Pass = PARSED under the compiled-program / executed-anchor / sealed-realizer / check-set contracts."
+  },
+  "visual_dependence": {
+    "source": "runs/vd_v1/verdicts.json",
+    "answerer": "google/gemini-2.5-flash",
+    "repeats_per_arm": 3,
+    "api_calls": 48,
+    "n_items": 8,
+    "n_visual_dependent": 1,
+    "rate": 0.125,
+    "wilson95": [
+      0.0224,
+      0.4709
+    ],
+    "verdict_counts": {
+      "TEXT_SUFFICIENT": 6,
+      "UNANSWERABLE": 1,
+      "VISUAL_DEPENDENT": 1
+    },
+    "mean_acc_with_image": 0.875,
+    "mean_acc_without_image": 0.875,
+    "binom_test_vs_chance_0.25": {
+      "p_two_sided": 0.6885
+    },
+    "mcnemar_with_vs_without_image": {
+      "only_with": 1,
+      "only_without": 1,
+      "p_exact": 1.0
+    },
+    "note": "Model-based operationalisation of visual necessity for this answerer; not a human claim."
+  },
+  "power_warning": "n=16 chunks / n=8 TLV items. Absence of significance is NOT equivalence.",
+  "mechanism_effect_TLV_pre_vs_post": {
+    "pre_run": "runs/full_v3e (motif catalog offered text-only motifs under TLV)",
+    "post_run": "runs/full_v4 (TLV restricted to cross-modal motifs)",
+    "n_pairs": 16,
+    "pre_parsed": 2,
+    "post_parsed": 8,
+    "only_post": 7,
+    "only_pre": 1,
+    "mcnemar_p_exact": 0.0703,
+    "reject_families_pre": {
+      "stage1:exec": 9,
+      "stage1:visual": 4,
+      "stage2:anti_verbatim": 1
+    },
+    "reject_families_post": {
+      "stage1:invalid_json": 6,
+      "stage1:exec": 1,
+      "stage1:compile": 1
+    },
+    "note": "Paired by chunk, same generator/seed/manifest; the manipulated factor is the motif catalog exposed under TLV."
+  }
+}

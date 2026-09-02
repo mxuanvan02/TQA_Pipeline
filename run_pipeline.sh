@@ -13,6 +13,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+export TQA_ROOT="${TQA_ROOT:-$SCRIPT_DIR}"
 
 # Colors for terminal output
 RED='\033[0;31m'
@@ -21,12 +22,75 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Optional: limit processing for testing (e.g., --limit 1)
-LIMIT_FLAG="${1:+--limit $1}"
+print_help() {
+    cat <<'EOF'
+Usage:
+  bash run_pipeline.sh [LIMIT]
+  bash run_pipeline.sh --limit N [--yes] [--require-drive]
+
+Options:
+  --limit N        Process first N items per stage (for testing).
+  --yes, -y        Continue non-interactively if Drive is not mounted.
+  --require-drive  Exit if Drive is not mounted.
+  -h, --help       Show help.
+
+Environment:
+  TQA_ROOT         Project root (default: script directory).
+  TQA_DATA_DIR     Data base dir (e.g., /content/TQA_Pipeline/data/output).
+  TQA_BACKUP_BASE  Drive backup dir (default: /content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup).
+  TQA_ASSUME_YES   Same effect as --yes when set to 1.
+  TQA_REQUIRE_DRIVE Same effect as --require-drive when set to 1.
+EOF
+}
+
+LIMIT_VALUE=""
+ASSUME_YES="${TQA_ASSUME_YES:-0}"
+REQUIRE_DRIVE="${TQA_REQUIRE_DRIVE:-0}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --limit)
+            [[ $# -lt 2 ]] && { echo "Missing value for --limit"; exit 2; }
+            LIMIT_VALUE="$2"
+            shift 2
+            ;;
+        --yes|-y)
+            ASSUME_YES="1"
+            shift
+            ;;
+        --require-drive)
+            REQUIRE_DRIVE="1"
+            shift
+            ;;
+        -h|--help)
+            print_help
+            exit 0
+            ;;
+        *)
+            if [[ -z "$LIMIT_VALUE" && "$1" =~ ^[0-9]+$ ]]; then
+                LIMIT_VALUE="$1"
+                shift
+            else
+                echo "Unknown argument: $1"
+                print_help
+                exit 2
+            fi
+            ;;
+    esac
+done
+
+LIMIT_FLAG="${LIMIT_VALUE:+--limit $LIMIT_VALUE}"
 
 echo -e "${CYAN}═══════════════════════════════════════════════════${NC}"
 echo -e "${CYAN}  TQA Pipeline — Multimodal Text-to-QA Dataset    ${NC}"
 echo -e "${CYAN}═══════════════════════════════════════════════════${NC}"
+echo -e "${CYAN}  Root: ${TQA_ROOT}${NC}"
+if [[ -n "${TQA_DATA_DIR:-}" ]]; then
+    echo -e "${CYAN}  Data override: ${TQA_DATA_DIR}${NC}"
+fi
+if [[ -n "${TQA_BACKUP_BASE:-}" ]]; then
+    echo -e "${CYAN}  Backup override: ${TQA_BACKUP_BASE}${NC}"
+fi
 echo ""
 
 # ─── Pre-flight: Google Drive Mount Check ───
@@ -41,11 +105,21 @@ else
     echo -e "${RED}   Backups will be DISABLED. Data exists only on volatile local disk.${NC}"
     echo -e "${YELLOW}   To mount Drive, run: from google.colab import drive; drive.mount('/content/drive')${NC}"
     echo ""
-    read -p "Continue without Drive backup? (y/N) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo -e "${RED}Aborted. Mount Drive first, then re-run.${NC}"
+    if [[ "$REQUIRE_DRIVE" == "1" ]]; then
+        echo -e "${RED}Aborted because --require-drive is enabled.${NC}"
         exit 1
+    fi
+    if [[ "$ASSUME_YES" == "1" ]]; then
+        echo -e "${YELLOW}Proceeding without Drive backup (--yes).${NC}"
+    elif [[ -t 0 ]]; then
+        read -p "Continue without Drive backup? (y/N) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo -e "${RED}Aborted. Mount Drive first, then re-run.${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${YELLOW}No TTY detected; proceeding without Drive backup.${NC}"
     fi
 fi
 echo ""

@@ -1,24 +1,136 @@
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Data (Crucial: do not push raw/interim/processed data)
-data/
-TQA_Pipeline/data/
-
-# Environments
+# Virtual environments and local secrets
 .env
-.venv
+!.env_example
+.venv/
 env/
 venv/
 ENV/
 
-# OS generated files
+# OS / editor junk
 .DS_Store
 .DS_Store?
 ._*
 .Spotlight-V100
 .Trashes
-ehthumbs.db
 Thumbs.db
+ehthumbs.db
+.vscode/
+
+# Local temporary files
+temp/
+tmp/
+BRAIN.md
+
+# Raw and intermediate pipeline data
+data/
+data/raw/
+data/TQA_Pipeline_Backup*/
+data/TQA_Pipeline_Backup-*.zip
+data/output/raw/
+data/output/interim/
+
+# Generated processed datasets and derived assets
+data/output/processed/
+
+# Research artifacts and non-release working material.
+# Only the ECM manuscript sources listed below are public; raw inputs, ledgers,
+# PDFs, figures, and working notes remain local.
+/research/*
+!/research/manuscript_ecm_tqag_ictc2026/
+/research/manuscript_ecm_tqag_ictc2026/*
+!/research/manuscript_ecm_tqag_ictc2026/main.tex
+!/research/manuscript_ecm_tqag_ictc2026/references.bib
+!/research/manuscript_ecm_tqag_ictc2026/README.md
+!/research/manuscript_ecm_tqag_ictc2026/results_summary.md
+!/research/manuscript_ecm_tqag_ictc2026/manuscript_guide.md
+!/research/manuscript_ecm_tqag_ictc2026/ecm_tqag_architecture.pdf
+!/research/manuscript_ecm_tqag_ictc2026/ecm_tqag_data_pipeline.pdf
+/research/artifacts/
+/research/results/
+/research/human_eval/
+
+# Research scripts are intentionally whitelisted, rather than publishing
+# historical runners that can reference local-only ledgers.
+/scripts/research/*
+!/scripts/research/run_qwen37_tqa_pilot.py
+!/scripts/research/audit_strict_tqa_results.py
+!/scripts/research/build_ecm_8chunk_manifest.py
+
+# Keep only the executable ECM contract test public.
+/tests/*
+!/tests/test_qwen37_tqa_pilot.py
+
+# Paper build artifacts
+research/paper/*.aux
+research/paper/*.bbl
+research/paper/*.bcf
+research/paper/*.blg
+research/paper/*.fdb_latexmk
+research/paper/*.fls
+research/paper/*.log
+research/paper/*.out
+research/paper/*.pdf
+research/paper/*.run.xml
+research/paper/*.synctex.gz
+research/paper/*.xdv
+research/paper.zip
+research/paper/figures/*.pdf
+
+*.md
+!README.md
+!research/manuscript_ecm_tqag_ictc2026/results_summary.md
+
+# --- ECM-TQAG ICTC2026 reproducibility artifacts (allowlist) ---
+!/research/work_ecm24/
+/research/work_ecm24/*
+!/research/work_ecm24/audit/
+!/research/work_ecm24/audit/*.json
+!/research/work_ecm24/runs/
+/research/work_ecm24/runs/*
+!/research/work_ecm24/runs/judge_full_sonnet5.jsonl
+!/research/work_ecm24/runs/judge_full_terra.jsonl
+!/research/work_ecm24/runs/vd_v1/
+!/research/work_ecm24/runs/vd_v1/verdicts.json
+!/research/work_ecm24/runs/vd_v1/trials.jsonl
+!/research/work_ecm24/stats_tests.py
+!/research/work_ecm24/judge_blinded.py
+!/research/work_ecm24/run_ecm24_matrix.py
+!/research/work_ecm24/ARTIFACTS.md
+!/research/work_ecm24/artifacts_sha256.txt
+# ECM v2/v3 deterministic instrument + v4 cross-modal extension.
+# These are code only: no textbook text, no page images, no API keys. The
+# directory stays deny-by-default (line 90) so evidence manifests and page
+# images can never be pushed by accident -- each publishable file is listed
+# explicitly here.
+!/research/work_ecm24/ecm_v2_core.py
+!/research/work_ecm24/ecm_v3_core.py
+!/research/work_ecm24/run_ecm_v2.py
+!/research/work_ecm24/run_ecm_v3.py
+!/research/work_ecm24/visual_dependence.py
+!/research/work_ecm24/run_visual_dependence.py
+!/research/work_ecm24/build_ecm24_dataset.py
+# Self-tests: they are the reproducibility claim -- a reviewer can replay the
+# whole deterministic contract without network access or restricted data.
+!/research/work_ecm24/test_ecm_v2_core.py
+!/research/work_ecm24/test_ecm_v3_core.py
+!/research/work_ecm24/test_transport_v3.py
+!/research/work_ecm24/test_crossmodal_v4.py
+!/research/work_ecm24/test_visual_dependence.py
+
+# local backups (never pushed)
+/_backups/
+
+# submission artifacts: ban thao, template tap chi, bai da xuat ban (co ban quyen)
+# -> repo nay la PUBLIC, khong day cac muc nay len
+/submission_hujos/
+/manuscript/
+/slides/
+
+# agent / runtime state (khong phai ma nguon)
+/.pi-subagents/
+/state/

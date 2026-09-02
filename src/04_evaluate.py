@@ -1,7 +1,7 @@
 """
 Stage 4 — Evaluation (LLM-as-a-Judge) + Stage 5 Final Output
 ==============================================================
-Who:    Qwen2.5-0.5B-Instruct (same LLM, strict judge system prompt).
+Who:    The configured Stage-4 judge model.
 Where:  Reads data/interim/raw_qa_pairs.json
         Writes data/interim/filtered_qa_pairs.json (Stage 4)
         Writes data/processed/dataset.jsonl       (Stage 5)
@@ -11,11 +11,6 @@ How:    1. Score each QA pair on Groundedness, Multimodal Alignment,
         3. Format surviving records into the TQARecord JSONL schema.
 Input:  raw_qa_pairs.json (from Stage 3).
 Output: filtered_qa_pairs.json + dataset.jsonl.
-
-GPU Optimization (L4 — 22.5 GB VRAM):
-    - Batched evaluation: 32 QA pairs per batch (short 256-token output)
-    - Left-padding for causal LM batch generation
-    - Drive checkpointing per-batch for Colab resilience
 """
 
 from __future__ import annotations
@@ -27,6 +22,7 @@ import re
 import shutil
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +39,7 @@ from src.config import (
     PathConfig,
     TQARecord,
 )
+from src.domain_tags import infer_domain_tag_from_record
 from src.utils import (
     AsyncDriveWriter,
     batched,
@@ -73,7 +70,7 @@ Respond using strict XML tags.
 """
 
 JUDGE_TEMPLATE = """\
-Evaluate the following QA pair on a Pass (1) or Fail (0) basis for each criterion:
+Evaluate the following QA pair on a Pass (1) or Fail (0) basis for each criterion, and categorize its cognitive depth.
 
 ## Context:
 {context}
@@ -92,11 +89,18 @@ Evaluate the following QA pair on a Pass (1) or Fail (0) basis for each criterio
 2. **Multimodal Alignment**: If visual info exists, does the QA properly reference it? (1 = Yes, 0 = No/Ignored. If no visuals, reply '1')
 3. **Legal Fluency**: Is the legal reasoning (syllogism) correct and logical? (1 = Yes, 0 = No)
 
+## Taxonomy Classification:
+Categorize the question into: 
+- **Remember**: Direct lookup of definitions/clauses.
+- **Understand**: Explanation or summarization.
+- **Apply**: Scenario-based reasoning.
+
 ## Output Format (strict XML tags):
 <evaluation>
 <groundedness>1 or 0</groundedness>
 <multimodal_alignment>1 or 0</multimodal_alignment>
 <legal_fluency>1 or 0</legal_fluency>
+<taxonomy_level>Remember/Understand/Apply</taxonomy_level>
 <justification>one-sentence explanation</justification>
 </evaluation>
 
@@ -123,11 +127,32 @@ class QAJudge:
         self._tokenizer = None
         self._vllm_engine = None
         self._vllm_sampling = None
+        self._api_client = None
+        self._api_wrapper = None
 
     def _load(self) -> None:
-        """Lazy-load the LLM on first use."""
-        if self._model is not None or self._vllm_engine is not None:
+        """
+        Lazy-load the LLM on first use.
+
+        # [Paper Note — Cross-Family Judge Loading Strategy]
+        # Primary judge: google/gemma-2-2b-it (Google/Gemma family)
+        # Fallback judge: microsoft/Phi-3-mini-4k-instruct (Microsoft family)
+        # Both are DIFFERENT families from the generator (Qwen) to avoid
+        # same-family self-reinforcement bias in LLM-as-a-judge evaluation.
+        # See §4.1 of the paper for experimental validation.
+        """
+        if self._model is not None or self._vllm_engine is not None or self._api_wrapper is not None:
             return
+
+        # Check if we should use API mode (priority)
+        from src.config import CFG
+        if getattr(self.cfg, "use_api", False) or "http" in CFG.benchmark.api_base:
+            try:
+                self._load_api()
+                if self._api_wrapper:
+                    return
+            except Exception as e:
+                log.warning("Failed to load API judge (%s). Falling back to local.", e)
 
         if getattr(self.cfg, "use_vllm", False):
             try:
@@ -137,7 +162,81 @@ class QAJudge:
                 log.warning("Failed to load vLLM (%s). Falling back to HuggingFace.", e)
                 self.cfg = type(self.cfg)(**{**self.cfg.__dict__, "use_vllm": False})
 
-        self._load_hf()
+        # Try primary judge model, then fallback if download/load fails.
+        try:
+            self._load_hf()
+        except Exception as primary_err:
+            fallback = getattr(self.eval_cfg, "fallback_judge_model_name", None)
+            if fallback and fallback != self.cfg.model_name:
+                log.warning(
+                    "Primary judge model '%s' failed to load (%s). "
+                    "Trying fallback judge: '%s'",
+                    self.cfg.model_name, primary_err, fallback,
+                )
+                from dataclasses import replace as dc_replace
+                self.cfg = dc_replace(self.cfg, model_name=fallback)
+                self._load_hf()
+            else:
+                raise
+
+    def _load_api(self) -> None:
+        """Load API-based judge (OpenAI-compatible)."""
+        from src.config import CFG
+        api_base = CFG.benchmark.api_base
+        api_key = CFG.benchmark.api_key
+        model_id = CFG.benchmark.model_name
+
+        log.info("Loading Judge LLM via API: %s at %s", model_id, api_base)
+        try:
+            from openai import OpenAI
+            self._api_client = OpenAI(base_url=api_base, api_key=api_key)
+            
+            # We wrap it in a mock vLLM-like interface
+            class Stage4APIWrapper:
+                def __init__(self, client, model_id, temp, max_tokens=256):
+                    self.client = client
+                    self.model_id = model_id
+                    self.temperature = temp
+                    self.max_tokens = max_tokens
+
+                def generate(self, prompts, use_tqdm=False, progress_label=None):
+                    def _call(p):
+                        try:
+                            # Use simple completion for judge
+                            res = self.client.chat.completions.create(
+                                model=self.model_id,
+                                messages=[{"role": "user", "content": p}],
+                                max_tokens=self.max_tokens,
+                                temperature=self.temperature
+                            )
+                            # Mock vLLM output structure
+                            return type('obj', (object,), {
+                                'outputs': [type('obj', (object,), {'text': res.choices[0].message.content})]
+                            })
+                        except Exception as e:
+                            log.error("API call failed: %s", e)
+                            return type('obj', (object,), {
+                                'outputs': [type('obj', (object,), {'text': ""})]
+                            })
+
+                    results = [None] * len(prompts)
+                    max_workers = 8 # Balanced for judge throughput
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        futures = {executor.submit(_call, p): i for i, p in enumerate(prompts)}
+                        it = as_completed(futures)
+                        if use_tqdm:
+                            it = tqdm(it, total=len(prompts), desc=progress_label or "API Judge")
+                        for f in it:
+                            results[futures[f]] = f.result()
+                    return results
+
+            self._api_wrapper = Stage4APIWrapper(
+                self._api_client, model_id, self.cfg.eval_temperature
+            )
+            log.info("  API judge ready")
+        except ImportError:
+            log.error("openai not found. Cannot use API judge.")
+            self._api_wrapper = None
 
     def _load_vllm(self) -> None:
         """Load the model using vLLM for high-throughput inference."""
@@ -146,7 +245,9 @@ class QAJudge:
 
         from vllm import LLM, SamplingParams
 
-        quantization = "awq" if self.cfg.load_in_4bit else None
+        # Autodetect AWQ: vLLM only supports 'awq' if it is pre-quantized in the repo
+        model_is_awq = "awq" in self.cfg.model_name.lower()
+        quantization = "awq" if model_is_awq else None
         
         self._vllm_engine = LLM(
             model=self.cfg.model_name,
@@ -220,9 +321,11 @@ class QAJudge:
             rationale=qa.get("legal_rationale", ""),
         )
 
+        # Merge system prompt into user message to ensure compliance with models 
+        # that don't support the 'system' role (e.g., Gemma-2, Phi-3).
+        full_user_content = f"{JUDGE_SYSTEM_PROMPT}\n\n{user_prompt}"
         messages = [
-            {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
+            {"role": "user", "content": full_user_content},
         ]
 
         return self._tokenizer.apply_chat_template(
@@ -275,6 +378,18 @@ class QAJudge:
         if not valid_prompts:
             return results
             
+        if self._api_wrapper is not None:
+             # --- API Path ---
+             batch_results = self._api_wrapper.generate(
+                 valid_prompts, use_tqdm=False, progress_label="API Judge"
+             )
+             for batch_idx, valid_idx in enumerate(valid_indices):
+                 response = batch_results[batch_idx].outputs[0].text
+                 scores = _parse_eval_xml(response)
+                 if scores:
+                     results[valid_idx] = {**qa_pairs[valid_idx], "eval_scores": scores}
+             return results
+
         if self._vllm_engine is not None:
             # --- vLLM Engine Path ---
             try:
@@ -318,6 +433,7 @@ class QAJudge:
                         temperature=self.cfg.eval_temperature,
                         do_sample=False,
                         pad_token_id=self._tokenizer.pad_token_id,
+                        use_cache=False,  # Fixes DynamicCache error for certain models
                     )
 
                 # Decode and parse each output
@@ -368,6 +484,7 @@ class QAJudge:
                         temperature=self.cfg.eval_temperature,
                         do_sample=False,
                         pad_token_id=self._tokenizer.pad_token_id,
+                        use_cache=False,  # Fixes DynamicCache error
                     )
 
                 response = self._tokenizer.decode(
@@ -409,6 +526,7 @@ def _parse_eval_xml(text: str) -> dict[str, Any] | None:
         "groundedness": 0.0,
         "multimodal_alignment": 0.0,
         "legal_fluency": 0.0,
+        "taxonomy_level": "Understand",  # Default fallback
         "justification": "",
         "overall": 0.0,
     }
@@ -416,6 +534,7 @@ def _parse_eval_xml(text: str) -> dict[str, Any] | None:
     g_match = re.search(r"<groundedness>([\s\S]*?)</groundedness>", text, re.IGNORECASE)
     m_match = re.search(r"<multimodal_alignment>([\s\S]*?)</multimodal_alignment>", text, re.IGNORECASE)
     l_match = re.search(r"<legal_fluency>([\s\S]*?)</legal_fluency>", text, re.IGNORECASE)
+    t_match = re.search(r"<taxonomy_level>([\s\S]*?)</taxonomy_level>", text, re.IGNORECASE)
     j_match = re.search(r"<justification>([\s\S]*?)</justification>", text, re.IGNORECASE)
 
     if not (g_match and m_match and l_match):
@@ -431,6 +550,9 @@ def _parse_eval_xml(text: str) -> dict[str, Any] | None:
 
         if j_match:
             scores["justification"] = j_match.group(1).strip()
+            
+        if t_match:
+            scores["taxonomy_level"] = t_match.group(1).strip().capitalize()
 
         scores["overall"] = 1.0 if (scores["groundedness"] == 1.0 and scores["legal_fluency"] == 1.0) else 0.0
 
@@ -508,7 +630,7 @@ def format_to_tqa_records(
         try:
             record = TQARecord(
                 qa_id=qa.get("qa_id", ""),
-                domain_tag=qa.get("domain_tag", "civil_law"),
+                domain_tag=infer_domain_tag_from_record(qa),
                 bloom_level=qa.get("bloom_level", ""),
                 context_payload=ContextPayload(
                     text=qa.get("context_text", ""),
@@ -539,6 +661,9 @@ def run_evaluation(
     drive_cfg: DriveBackupConfig | None = None,
     gpu_cfg: GPUOptConfig | None = None,
     limit: int | None = None,
+    no_filter: bool = False,
+    skip_judge: bool = False,
+    allow_same_model: bool = False,
 ) -> list[TQARecord]:
     """
     End-to-end Stage 4 + 5: evaluate, filter, format (BATCHED).
@@ -562,6 +687,31 @@ def run_evaluation(
 
     # Pre-flight: verify Drive mount
     verify_drive_mount(drive_cfg)
+    if skip_judge and not no_filter:
+        log.warning("--skip-judge implies --no-filter; enabling no_filter automatically.")
+        no_filter = True
+
+    # [Paper Note — Anti-bias Guard]
+    # Warn (not raise) if generator and judge are from the same family,
+    # because in a low-resource setting the user may intentionally accept
+    # same-family evaluation as a baseline ablation.
+    # The cross-family judge (gemma-2-2b-it) is the DEFAULT and recommended path.
+    if not skip_judge and not allow_same_model:
+        gen_family = llm_cfg.model_name.split("/")[0].lower() if "/" in llm_cfg.model_name else ""
+        judge_family = (llm_cfg.model_name if allow_same_model else CFG.evaluation.judge_model_name).split("/")[0].lower()
+        # Use the actual judge model being loaded
+        active_judge = getattr(llm_cfg, "model_name", CFG.evaluation.judge_model_name)
+        active_gen   = CFG.llm.model_name
+        active_gen_family   = active_gen.split("/")[0].lower()   if "/" in active_gen   else active_gen.lower()
+        active_judge_family = active_judge.split("/")[0].lower() if "/" in active_judge else active_judge.lower()
+        if active_gen_family == active_judge_family:
+            log.warning(
+                "[Paper Note] Generator ('%s', family='%s') and Judge ('%s', family='%s') "
+                "appear to be from the SAME model family. This may inflate evaluation scores "
+                "due to self-reinforcement bias. Use --allow-same-model to suppress this warning "
+                "or set judge_model_name to a different family (e.g., google/gemma-2-2b-it).",
+                active_gen, active_gen_family, active_judge, active_judge_family,
+            )
 
     # Load raw QA pairs
     raw_pairs = load_json(paths.raw_qa_pairs)
@@ -573,76 +723,83 @@ def run_evaluation(
     new_pairs = []
     evaluated: list[dict[str, Any]] = []
 
-    for qa in raw_pairs:
-        qa_id = qa.get("qa_id", "unknown")
-        drive_qa_eval = drive_cfg.evaluated_qa_dir / f"{qa_id}.json"
-
-        saved_eval = load_drive_checkpoint(drive_qa_eval, drive_cfg)
-        if saved_eval is not None:
-            evaluated.append(saved_eval)
-        else:
-            new_pairs.append(qa)
-
-    if not new_pairs:
-        log.info("All %d QA pairs already evaluated (loaded from Drive cache)", len(raw_pairs))
+    if skip_judge:
+        log.info("Skipping judge evaluation (--skip-judge). Using raw QA pairs directly.")
+        evaluated = raw_pairs
     else:
-        log.info(
-            "Evaluating %d new QA pairs (batch_size=%d), %d cached",
-            len(new_pairs), eval_cfg.batch_size, len(raw_pairs) - len(new_pairs),
-        )
+        for qa in raw_pairs:
+            qa_id = qa.get("qa_id", "unknown")
+            drive_qa_eval = drive_cfg.evaluated_qa_dir / f"{qa_id}.json"
 
-        # Prepare async writer if configured
-        async_writer = None
-        if getattr(gpu_cfg, "async_drive_io", False):
-            async_writer = AsyncDriveWriter(max_workers=2)
+            saved_eval = load_drive_checkpoint(drive_qa_eval, drive_cfg)
+            if saved_eval is not None:
+                evaluated.append(saved_eval)
+            else:
+                new_pairs.append(qa)
 
-        # ── Stage 4: Batched Evaluate ──
-        judge = QAJudge(llm_cfg, eval_cfg, gpu_cfg)
-        judge._load()
-        batch_count = 0
-        total_batches = (len(new_pairs) + eval_cfg.batch_size - 1) // eval_cfg.batch_size
+    if not skip_judge:
+        if not new_pairs:
+            log.info("All %d QA pairs already evaluated (loaded from Drive cache)", len(raw_pairs))
+        else:
+            log.info(
+                "Evaluating %d new QA pairs (batch_size=%d), %d cached",
+                len(new_pairs), eval_cfg.batch_size, len(raw_pairs) - len(new_pairs),
+            )
 
-        for batch_qa in tqdm(
-            batched(new_pairs, eval_cfg.batch_size),
-            total=total_batches,
-            desc="Eval Batches",
-        ):
-            batch_count += 1
+            # Prepare async writer if configured
+            async_writer = None
+            if getattr(gpu_cfg, "async_drive_io", False):
+                async_writer = AsyncDriveWriter(max_workers=2)
 
-            # Log GPU usage periodically
-            if batch_count % gpu_cfg.log_gpu_interval == 0:
-                log_gpu_memory(f"Eval batch {batch_count}/{total_batches}")
+            # ── Stage 4: Batched Evaluate ──
+            judge = QAJudge(llm_cfg, eval_cfg, gpu_cfg)
+            judge._load()
+            batch_count = 0
+            total_batches = (len(new_pairs) + eval_cfg.batch_size - 1) // eval_cfg.batch_size
 
-            # Batch evaluate
-            batch_results = judge.evaluate_batch(batch_qa)
+            for batch_qa in tqdm(
+                batched(new_pairs, eval_cfg.batch_size),
+                total=total_batches,
+                desc="Eval Batches",
+            ):
+                batch_count += 1
 
-            # Collect results & checkpoint to Drive
-            for qa_result in batch_results:
-                if qa_result is not None:
-                    evaluated.append(qa_result)
+                # Log GPU usage periodically
+                if batch_count % gpu_cfg.log_gpu_interval == 0:
+                    log_gpu_memory(f"Eval batch {batch_count}/{total_batches}")
 
-                    # Per-QA Drive checkpoint
-                    qa_id = qa_result.get("qa_id", "unknown")
-                    drive_qa_eval = drive_cfg.evaluated_qa_dir / f"{qa_id}.json"
-                    if async_writer:
-                        async_writer.submit(qa_result, drive_qa_eval, drive_cfg)
-                    else:
-                        sync_json_to_drive(qa_result, drive_qa_eval, drive_cfg)
+                # Batch evaluate
+                batch_results = judge.evaluate_batch(batch_qa)
 
-            # Periodic VRAM cleanup
-            if batch_count % gpu_cfg.empty_cache_interval == 0:
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                # Collect results & checkpoint to Drive
+                for qa_result in batch_results:
+                    if qa_result is not None:
+                        evaluated.append(qa_result)
 
-        if async_writer:
-            async_writer.flush()
-            
-        judge.unload()
+                        # Per-QA Drive checkpoint
+                        qa_id = qa_result.get("qa_id", "unknown")
+                        drive_qa_eval = drive_cfg.evaluated_qa_dir / f"{qa_id}.json"
+                        if async_writer:
+                            async_writer.submit(qa_result, drive_qa_eval, drive_cfg)
+                        else:
+                            sync_json_to_drive(qa_result, drive_qa_eval, drive_cfg)
 
-    log.info("  Successfully evaluated %d / %d pairs", len(evaluated), len(raw_pairs))
+                # Periodic VRAM cleanup
+                if batch_count % gpu_cfg.empty_cache_interval == 0:
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+
+            if async_writer:
+                async_writer.flush()
+
+            judge.unload()
+
+        log.info("  Successfully evaluated %d / %d pairs", len(evaluated), len(raw_pairs))
 
     # Filter below-threshold samples
-    filtered = filter_qa_pairs(evaluated, eval_cfg)
+    filtered = evaluated if no_filter else filter_qa_pairs(evaluated, eval_cfg)
+    if no_filter:
+        log.info("Skipping filter (--no-filter). Keeping all %d records.", len(filtered))
 
     # Save filtered pairs (intermediate artifact)
     save_json(filtered, paths.filtered_qa_pairs)
@@ -673,7 +830,78 @@ def run_evaluation(
         paths.dataset_jsonl,
         eval_cfg.batch_size,
     )
+
+    # ── Stage 6: Academic Summary Report ──
+    _print_academic_summary(evaluated, filtered)
+
     return records
+
+
+def _print_academic_summary(evaluated: list[dict[str, Any]], filtered: list[dict[str, Any]]) -> None:
+    """Print a structured report to populate paper tables (Table 1, Table 2)."""
+    if not evaluated:
+        return
+
+    total = len(evaluated)
+    passed = len(filtered)
+    
+    # 1. Main Metrics (Table 1)
+    avg_g = sum(q.get("eval_scores", {}).get("groundedness", 0) for q in evaluated) / total
+    avg_f = sum(q.get("eval_scores", {}).get("legal_fluency", 0) for q in evaluated) / total
+    avg_a = sum(q.get("eval_scores", {}).get("multimodal_alignment", 0) for q in evaluated) / total
+    
+    # 2. Taxonomy Distribution
+    bloom_counts = {"Remember": 0, "Understand": 0, "Apply": 0}
+    for q in evaluated:
+        lvl = q.get("eval_scores", {}).get("taxonomy_level", "Understand")
+        if lvl in bloom_counts:
+            bloom_counts[lvl] += 1
+        else:
+            bloom_counts["Understand"] += 1 # fallback
+
+    # 3. Error Taxonomy (Table 2)
+    rejected = [q for q in evaluated if q not in filtered]
+    error_counts = {
+        "Legal Hallucination": 0,
+        "Visual Misalignment": 0,
+        "Logical Fallacy": 0,
+        "Semantic Overlap": 0,
+        "Other": 0
+    }
+    
+    for q in rejected:
+        scores = q.get("eval_scores", {})
+        just = scores.get("justification", "").lower()
+        
+        if scores.get("groundedness", 1.0) < 1.0:
+            error_counts["Legal Hallucination"] += 1
+        elif scores.get("multimodal_alignment", 1.0) < 1.0:
+            error_counts["Visual Misalignment"] += 1
+        elif scores.get("legal_fluency", 1.0) < 1.0:
+            error_counts["Logical Fallacy"] += 1
+        else:
+            error_counts["Other"] += 1
+
+    print("\n" + "="*60)
+    print("           ACADEMIC SUMMARY REPORT (FOR PAPER)")
+    print("="*60)
+    print(f"Total Evaluated: {total}")
+    print(f"Final Passed:    {passed} ({passed/total*100:.1f}%)")
+    print("-" * 60)
+    print(f"TABLE 1: MAIN METRICS (Averages)")
+    print(f"  - Groundedness:      {avg_g*100:.1f}%")
+    print(f"  - Legal Fluency:     {avg_f*100:.1f}%")
+    print(f"  - MM Alignment:      {avg_a*100:.1f}%")
+    print("-" * 60)
+    print(f"BLOOM TAXONOMY DISTRIBUTION")
+    for k, v in bloom_counts.items():
+        print(f"  - {k:12}: {v:4} ({v/total*100:.1f}%)")
+    print("-" * 60)
+    print(f"TABLE 2: ERROR TAXONOMY (Rejected Samples: {len(rejected)})")
+    if len(rejected) > 0:
+        for k, v in error_counts.items():
+            print(f"  - {k:20}: {v:4} ({v/len(rejected)*100:.1f}%)")
+    print("="*60 + "\n")
 
 
 # ─────────────────────────────────────────────
@@ -688,16 +916,68 @@ def main() -> None:
         "--batch-size", type=int, default=None,
         help="Override eval batch size (default: from config)",
     )
+    parser.add_argument(
+        "--model-name",
+        type=str,
+        default=None,
+        help="Override judge model name (for cross-judge experiments)",
+    )
+    parser.add_argument(
+        "--no-filter",
+        action="store_true",
+        help="Ablation/baseline: skip threshold filtering",
+    )
+    parser.add_argument(
+        "--skip-judge",
+        action="store_true",
+        help="Baseline: skip judge evaluation and format raw QA directly",
+    )
+    parser.add_argument(
+        "--disable-multimodal-alignment",
+        action="store_true",
+        help="Ablation: disable multimodal alignment criterion in filtering",
+    )
+    parser.add_argument(
+        "--allow-same-model",
+        action="store_true",
+        help="Allow using the same model for generation and judge (not recommended).",
+    )
+    parser.add_argument("--groundedness-threshold", type=float, default=None)
+    parser.add_argument("--multimodal-threshold", type=float, default=None)
+    parser.add_argument("--legal-fluency-threshold", type=float, default=None)
+    parser.add_argument("--overall-threshold", type=float, default=None)
     args = parser.parse_args()
 
     log.info("Stage 4 -- Evaluation (LLM-as-a-Judge, Batched)")
 
+    from dataclasses import replace
+
+    llm_cfg = replace(CFG.llm, model_name=CFG.evaluation.judge_model_name)
+    eval_cfg = CFG.evaluation
+
+    if args.model_name:
+        llm_cfg = replace(llm_cfg, model_name=args.model_name)
     if args.batch_size:
-        from dataclasses import replace
-        eval_cfg = replace(CFG.evaluation, batch_size=args.batch_size)
-        results = run_evaluation(limit=args.limit, eval_cfg=eval_cfg)
-    else:
-        results = run_evaluation(limit=args.limit)
+        eval_cfg = replace(eval_cfg, batch_size=args.batch_size)
+    if args.disable_multimodal_alignment:
+        eval_cfg = replace(eval_cfg, multimodal_alignment_threshold=0.0)
+    if args.groundedness_threshold is not None:
+        eval_cfg = replace(eval_cfg, groundedness_threshold=args.groundedness_threshold)
+    if args.multimodal_threshold is not None:
+        eval_cfg = replace(eval_cfg, multimodal_alignment_threshold=args.multimodal_threshold)
+    if args.legal_fluency_threshold is not None:
+        eval_cfg = replace(eval_cfg, legal_fluency_threshold=args.legal_fluency_threshold)
+    if args.overall_threshold is not None:
+        eval_cfg = replace(eval_cfg, overall_threshold=args.overall_threshold)
+
+    results = run_evaluation(
+        limit=args.limit,
+        llm_cfg=llm_cfg,
+        eval_cfg=eval_cfg,
+        no_filter=args.no_filter,
+        skip_judge=args.skip_judge,
+        allow_same_model=args.allow_same_model,
+    )
 
     if not results:
         log.warning("No records survived evaluation. Check thresholds or raw QA quality.")

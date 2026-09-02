@@ -744,6 +744,7 @@ def process_documents(
     drive_cfg: DriveBackupConfig | None = None,
     gpu_cfg: GPUOptConfig | None = None,
     limit: int | None = None,
+    enable_chunk_cleaning: bool = True,
 ) -> list[dict[str, Any]]:
     """
     End-to-end Stage 2: chunk all MDs and describe images.
@@ -811,7 +812,8 @@ def process_documents(
         md_text = md_path.read_text(encoding="utf-8")
 
         chunks = parse_markdown_to_chunks(md_text, doc_id, image_dir, chunking_cfg)
-        chunks = clean_chunks(chunks, cleaning_cfg)
+        if enable_chunk_cleaning:
+            chunks = clean_chunks(chunks, cleaning_cfg)
         doc_chunks.append(chunks)
 
     log.info("  Phase 1 done in %.1fs — %d documents, %d total chunks",
@@ -900,10 +902,18 @@ def main() -> None:
         description="Stage 2: Chunk Markdown + VLM image description -> multimodal contexts"
     )
     parser.add_argument("--limit", type=int, default=None, help="Limit to N documents")
+    parser.add_argument(
+        "--disable-cleaning",
+        action="store_true",
+        help="Ablation: disable chunk quality cleaning heuristics",
+    )
     args = parser.parse_args()
 
     log.info("Stage 2 -- Context Structuring & Representation (Optimized)")
-    results = process_documents(limit=args.limit)
+    results = process_documents(
+        limit=args.limit,
+        enable_chunk_cleaning=not args.disable_cleaning,
+    )
 
     if not results:
         log.warning("No contexts were generated. Check data/interim/ for .md files.")

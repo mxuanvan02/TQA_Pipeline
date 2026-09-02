@@ -1,0 +1,578 @@
+\documentclass[conference]{IEEEtran}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb,url,graphicx}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\newcommand{\T}{\mathsf{T}}
+\newcommand{\TL}{\mathsf{TL_{struct}}}
+\newcommand{\TLV}{\mathsf{TLV}}
+\newcommand{\vdrate}{\mathrm{VDR}}
+
+\title{Making Multimodality a Mechanism, Not a Label: An Executable Cross-Modal Contract and a Falsifiable Visual-Dependence Criterion for Textbook Question Construction}
+\author{\IEEEauthorblockN{Xuan Van Mai\IEEEauthorrefmark{1}, Van Long Tran\IEEEauthorrefmark{1}, Viet Long Tran\IEEEauthorrefmark{2}, Van Khang Nguyen\IEEEauthorrefmark{1}, and Tuong Tri Nguyen\IEEEauthorrefmark{1},\IEEEauthorrefmark{3}}\IEEEauthorblockA{\IEEEauthorrefmark{1}University of Education, Hue University, Hue, Vietnam}\IEEEauthorblockA{\IEEEauthorrefmark{2}University of Law, Hue University, Hue, Vietnam}\IEEEauthorblockA{\IEEEauthorrefmark{3}Institute of Open Education and Information Technology, Hue University, Hue, Vietnam}}
+
+\begin{document}
+\maketitle
+\begin{abstract}
+Attaching a page image to a question-generation prompt does not make the resulting
+item multimodal. We formalise this gap for textbook question answering (TQA) and
+close it from two sides. First, we replace the visual \emph{condition label} with an
+executable \emph{cross-modal contract}: the planner must request a motif whose
+template declares a visual step, and that step must bind a declared page image,
+commit to a normalised bounding box, and report an observation, or the construction
+is refused by local code before any question is worded. Second, because a
+construction-side contract can still yield a question answerable from prose alone,
+we add a falsifiable acceptance criterion: a paired with-image/without-image
+ablation, run by an answerer from a third model family on the frozen item, defines
+the visual-dependence rate $\vdrate$. On 16 OCR-derived chunks from 9 Vietnamese
+law textbooks with a manifest-pinned image alignment, restricting the visual
+condition to cross-modal motifs raises its contract pass rate from 2/16 to 8/16
+under an otherwise identical generator, seed and manifest (paired McNemar,
+7 versus 1 discordant chunks, $p=0.070$), and eliminates ungrounded-anchor and
+missing-visual-binding rejections. The ablation then falsifies the stronger reading
+of that gain: of the 8 contract-passing visual items, only 1 requires the image
+($\vdrate=0.125$, Wilson 95\% CI $[0.02,0.47]$), 6 are text-sufficient, 1 is broken
+by the image, and mean answerer accuracy is identical with and without the image
+($0.875$ versus $0.875$). We report this negative result as the primary empirical
+finding: structural cross-modal guards are necessary but demonstrably insufficient,
+and $\vdrate$ supplies the missing falsifiable test that pass rates cannot provide.
+\end{abstract}
+\begin{IEEEkeywords}
+multimodal question generation, textbook question answering, visual dependence, evidence-grounded generation, provenance-aware generation, falsifiable evaluation
+\end{IEEEkeywords}
+
+\section{Introduction}
+Textbooks distribute instructional content across prose, headings, tables,
+diagrams, charts, and page layout. A multimodal textbook question-answering (TQA)
+item therefore benefits from an inspectable relation among its answer, supporting
+evidence, and visual or structural context. Document models combine text,
+geometry, and visual representations \cite{xu2020layoutlm,xu2021layoutlmv2,huang2022layoutlmv3};
+document, table, and chart QA demonstrate the role of structured and visual
+evidence \cite{mathew2021docvqa,herzig2020tapas,tito2023multipage,kafle2018dvqa,masry2022chartqa};
+and question generation supports visual and educational authoring
+\cite{mostafazadeh2016generating,zhu2016visual7w,heilman2010good,kurdi2020systematic}.
+
+This paper starts from a failure we observed in our own pipeline. When the visual
+condition was implemented as an \emph{evidence label} --- text plus layout plus an
+attached page image --- the generator was free to request a text-only reasoning
+motif, satisfy every structural check using prose anchors, and emit an item that
+was called multimodal because an image had been supplied. The image was present in
+the prompt and absent from the derivation. That construction is unfalsifiable: no
+artefact of the item records whether the image mattered.
+
+We treat this as a specification problem rather than a prompt-tuning problem, and
+we address it at two distinct levels that are easy to conflate.
+
+\emph{Construction level.} Multimodality becomes a mechanism. The motif catalog is
+partitioned into text-only and cross-modal templates; a cross-modal template
+declares a step with \texttt{modality} $=$ \emph{visual}. Under the visual
+condition the planner may request only cross-modal motifs, and a declared visual
+step is compiled only if it names a declared image, commits to a normalised
+bounding box, and reports an observation. A visual anchor is deliberately never
+scored against prose, so it can neither be satisfied by paraphrasing text nor
+counted toward the text-side distinctness floor.
+
+\emph{Item level.} A contract cannot certify necessity. A question may be built
+through an image and still be answerable from the prose alone. We therefore define
+the visual-dependence rate $\vdrate$ from a paired ablation on the frozen item:
+an independent answerer, from a model family disjoint from the generator, answers
+the identical question and choices with and without the page image; the item is
+visual-dependent only if the answerer is correct with the image and incorrect
+without it.
+
+The contributions are: (i) an executable cross-modal contract that makes the
+visual pathway a compile-time requirement rather than a prompt-level suggestion
+(Section~\ref{sec:protocol}, Algorithm~\ref{alg:construct});
+(ii) $\vdrate$, a falsifiable, replayable acceptance criterion for visual
+necessity that is independent of the construction checks
+(Algorithm~\ref{alg:vd}); (iii) a paired measurement of what the contract buys on
+the construction side (Section~\ref{sec:mechanism}); and (iv) the negative result
+that the contract does \emph{not} buy visual necessity
+(Section~\ref{sec:vdresults}), with a diagnosis of why.
+
+\section{ECM-TQAG Construction Protocol}
+\label{sec:protocol}
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{ecm_tqag_architecture.pdf}
+\caption{ECM-TQAG construction and evaluation. A user supplies OCR text from a
+textbook PDF and selects an LLM runtime or API provider. The planner proposes a
+source-bound construction and requests a motif; local code matches, compiles,
+executes and traces it; a sealed realizer receives only the locked construction.
+Under the visual condition the requested motif must be cross-modal, so a visual
+anchor is a compile-time requirement. The frozen item is then submitted to the
+paired with-image/without-image ablation that defines $\vdrate$.}
+\label{fig:architecture}
+\end{figure*}
+
+\subsection{Input and multimodal evidence representation}
+The user-facing input is an OCR-derived chunk from a textbook PDF. The chunk
+supplies extracted text and may retain source location metadata; the system
+associates structural cues and the corresponding page visual when the selected
+condition permits them. We represent the available evidence as
+$D=(T,L,V,M,\Pi)$: text, structure/layout, visual regions, metadata, and
+source-level provenance. Parsing and alignment produce
+\begin{equation}
+G=(N,E,\rho),\qquad N=N_T\cup N_L\cup N_V\cup N_M,
+\end{equation}
+where $\rho:N\rightarrow\Pi$ links each node to a source descriptor such as page,
+region, character span, and extraction metadata. This source mapping is distinct
+from the item-level trace $\Gamma$ \cite{moreau2013prov} and is recomputed
+deterministically from the supplied chunk.
+
+For each selected chunk, let $c\in K=\{\T,\TL,\TLV\}$ denote an evidence
+condition. ECM-TQAG forms the paired evidence packages
+\begin{equation}
+\mathcal{X}_{\T}=(T),\quad \mathcal{X}_{\TL}=(T,L),\quad \mathcal{X}_{\TLV}=(T,L,V).
+\end{equation}
+
+\subsection{Motif catalog and the cross-modal contract}
+The catalog $\mathcal{M}$ is closed and contains $|\mathcal{M}|=7$ templates. Each
+template fixes an ordered step list; a step declares whether it needs an anchor and,
+if so, its modality. Let
+\begin{equation}
+\mathcal{M}_{V}=\{m\in\mathcal{M}: \exists\, s\in m,\ \mathrm{mod}(s)=\text{visual}\}
+\end{equation}
+be the cross-modal subset, with $|\mathcal{M}_V|=2$
+(\texttt{diagram\_text\_reconcile}, \texttt{figure\_condition\_apply}). The
+admissible catalog is condition-dependent:
+\begin{equation}
+\mathcal{A}(c)=
+\begin{cases}
+\mathcal{M}_V, & c=\TLV,\\
+\mathcal{M}\setminus\mathcal{M}_V, & c\in\{\T,\TL\}.
+\end{cases}
+\label{eq:admissible}
+\end{equation}
+Equation~\eqref{eq:admissible} is the mechanism. Offering text-only motifs under
+$\TLV$ is precisely what allowed the visual condition to degenerate into
+``$\TL$ plus a label''; offering cross-modal motifs under $\T$ or $\TL$ would
+guarantee a compile rejection, since no image is declared.
+
+A declared visual step $s$ compiles only if all of the following hold, where
+$\mathcal{V}$ is the declared image list of the package:
+\begin{align}
+&\mathrm{node}(s)\in\{1,\dots,|\mathcal{V}|\}, \label{eq:vc1}\\
+&b(s)=(x_0,y_0,x_1,y_1)\in[0,1]^4,\ x_0<x_1,\ y_0<y_1, \label{eq:vc2}\\
+&\mathrm{obs}(s)\neq\varnothing. \label{eq:vc3}
+\end{align}
+Conditions~\eqref{eq:vc1}--\eqref{eq:vc3} are checked by local code, not by the
+model. A visual anchor is excluded from text matching by construction: scoring it
+against prose would mark every cross-modal step ungrounded, which is exactly the
+behaviour of a text-only executor. Consequently the text-side distinctness floor
+is computed over text-anchor steps only,
+\begin{equation}
+\phi(m)=\min\bigl(\mathrm{minAnchors}(m),\,|\{s\in m:\mathrm{mod}(s)=\text{text}\}|\bigr),
+\end{equation}
+so a cross-modal motif is neither privileged nor penalised relative to a text-only
+motif on the text side.
+
+\subsection{Evidence-first construction}
+Construction follows one spine,
+\begin{equation}
+\text{OCR chunk} \rightarrow G \rightarrow G_m \rightarrow z \rightarrow (A,\Gamma) \rightarrow q \rightarrow \mathcal{C},
+\end{equation}
+with $A=\mathrm{Exec}(z,G_m)$ and $\Gamma=\mathrm{Trace}(z,G_m)$. Algorithm~\ref{alg:construct}
+states the procedure; every \textbf{reject} is a terminal, recorded outcome rather
+than a retry, so a rejected construction is never silently converted into a valid
+item.
+
+\begin{algorithm}[t]
+\caption{ECM-TQAG construction with the cross-modal contract}
+\label{alg:construct}
+\begin{algorithmic}[1]
+\Require package $\mathcal{X}_c$ with text $T$, structure $L$, images $\mathcal{V}$; condition $c$; catalog $\mathcal{M}$
+\Ensure item $(q,\mathcal{O},y,\Gamma)$ or a typed rejection
+\State $\mathcal{A}\gets\mathcal{A}(c)$ \Comment{Eq.~\eqref{eq:admissible}}
+\State $P\gets\textsc{Planner}(\mathcal{X}_c,\mathcal{A})$ \Comment{stage 1: sees evidence}
+\If{$P$ is not valid JSON} \State \Return \textbf{reject} \textsc{invalid\_json} \EndIf
+\If{$\mathrm{motif}(P)\notin\mathcal{A}$} \State \Return \textbf{reject} \textsc{motif\_not\_admissible} \EndIf
+\State $m\gets\mathcal{M}[\mathrm{motif}(P)]$
+\If{$|\mathrm{steps}(P)|\neq|m|$} \State \Return \textbf{reject} \textsc{step\_count\_mismatch} \EndIf
+\ForAll{$s\in\mathrm{steps}(P)$ with $\mathrm{mod}(s)=\text{visual}$}
+  \If{Eq.~\eqref{eq:vc1}, \eqref{eq:vc2} or \eqref{eq:vc3} fails}
+    \State \Return \textbf{reject} \textsc{no\_visual\_binding}
+  \EndIf
+\EndFor
+\If{$c=\TLV$ and $m\notin\mathcal{M}_V$} \State \Return \textbf{reject} \textsc{visual\_contract} \EndIf
+\State $z\gets\textsc{Compile}(m,P)$; $\ \Sigma\gets\textsc{Sentences}(T)$
+\State $u\gets0$; $\ \mathcal{S}\gets\varnothing$
+\ForAll{$s\in\mathrm{steps}(z)$ needing an anchor}
+  \If{$\mathrm{mod}(s)=\text{visual}$}
+    \State mark $s$ \textsc{visual}; \textbf{continue} \Comment{never scored on prose}
+  \EndIf
+  \State $(i,\sigma)\gets\arg\max_{j}\ \mathrm{idf\text{-}overlap}(\mathrm{anchor}(s),\Sigma_j)$
+  \If{$\sigma\ge\tau$} \State $\mathcal{S}\gets\mathcal{S}\cup\{i\}$ \Else{} \State $u\gets u+1$ \EndIf
+\EndFor
+\If{$u>0$} \State \Return \textbf{reject} \textsc{ungrounded\_steps}$(u)$ \EndIf
+\If{$|\mathcal{S}|<\phi(m)$} \State \Return \textbf{reject} \textsc{anchors\_not\_distinct} \EndIf
+\State $(A,\Gamma)\gets(\mathrm{Exec}(z,G_m),\mathrm{Trace}(z,G_m))$
+\State $\hat{z}\gets\textsc{Seal}(A,\Gamma)$ \Comment{no chunk text, no image}
+\State $(q,\mathcal{O},y)\gets\textsc{Realizer}(\hat{z})$ \Comment{stage 2: blind to source}
+\If{$\mathcal{C}(q,\mathcal{O},y,A,\Gamma)$ fails} \State \Return \textbf{reject} \textsc{check\_set} \EndIf
+\State \Return $(q,\mathcal{O},y,\Gamma)$
+\end{algorithmic}
+\end{algorithm}
+
+The realizer receives only the sealed construction $\hat{z}$: no chunk text and no
+page image. This separation is what makes the anti-verbatim and leakage checks
+meaningful, and it also means the realizer cannot recover visual information that
+the planner failed to record.
+
+\subsection{Validation and replay}
+The check set $\mathcal{C}$ enforces a well-formed derivation, non-empty answer
+atoms, atom--trace correspondence, four distinct options, an in-range answer index,
+answer--choice agreement, a maximum verbatim run, and an excerpt leakage bound.
+Replay recomputes the source mapping, motif match, compiled program, answer atoms
+and trace from the manifest without network access. These checks establish
+structural and provenance validity only; semantic correctness, legal correctness,
+pedagogical quality and visual necessity require separate assessment.
+
+\section{A Falsifiable Criterion for Visual Necessity}
+\label{sec:vd}
+Algorithm~\ref{alg:construct} certifies that the \emph{planner} used the image. It
+says nothing about the \emph{question}. We therefore define an item-level criterion
+that is independent of every construction check.
+
+Fix a contract-passing item with question $q$, ordered choices $\mathcal{O}$, gold
+index $y$, evidence text $T$ and page image $v$. Define two arms that differ in
+exactly one factor,
+\begin{equation}
+\pi_{+}=(q,\mathcal{O},T,L,v),\qquad \pi_{-}=(q,\mathcal{O},T,L),
+\end{equation}
+and require byte-identical $q$, $\mathcal{O}$ and $T$ across arms; a fingerprint
+\begin{equation}
+\mathrm{fp}=\mathrm{SHA256}\bigl(\mathrm{canon}(q,\mathcal{O},T)\bigr)
+\end{equation}
+is recomputed per trial and a mismatch aborts scoring rather than producing a
+plausible-looking number. An answerer $\mathcal{J}$ from a family disjoint from the
+generator returns only $\{\texttt{answer\_index}\}$; it never sees $y$, the
+rationale, the motif, the bounding box, or the condition label. With $k$ repeats
+per arm and majority correctness $\mu_{\pm}\in\{\text{true},\text{false},\perp\}$,
+\begin{equation}
+\mathrm{verdict}=
+\begin{cases}
+\textsc{indeterminate}, & \mu_{+}=\perp \text{ or } \mu_{-}=\perp,\\
+\textsc{unanswerable}, & \mu_{+}=\text{false},\\
+\textsc{text\_sufficient}, & \mu_{+}\wedge\mu_{-},\\
+\textsc{visual\_dependent}, & \mu_{+}\wedge\neg\mu_{-},
+\end{cases}
+\label{eq:verdict}
+\end{equation}
+and the headline quantity is
+\begin{equation}
+\vdrate=\frac{|\{\text{items}:\textsc{visual\_dependent}\}|}{|\{\text{contract-passing items tested}\}|}.
+\label{eq:vdr}
+\end{equation}
+
+Three design choices in Eq.~\eqref{eq:verdict} are deliberate. \textsc{unanswerable}
+is separated from \textsc{visual\_dependent} because an item that is wrong even
+\emph{with} the image is defective, and counting it as evidence about vision would
+be an artefact. Repeats with a strict majority prevent a single flipped trial at
+temperature $0$ from promoting an item, and \textsc{indeterminate} keeps unstable
+items out of the numerator instead of rounding them in. Finally, the denominator in
+Eq.~\eqref{eq:vdr} is every contract-passing item submitted, not only the items that
+survive; otherwise $\vdrate$ would be $1$ by construction and would claim nothing.
+Chance accuracy $1/|\mathcal{O}|=0.25$ is reported alongside, since a guessable
+option set can be answered without either modality.
+
+\begin{algorithm}[t]
+\caption{Visual-dependence ablation (defines $\vdrate$)}
+\label{alg:vd}
+\begin{algorithmic}[1]
+\Require contract-passing items $\mathcal{I}$; answerer $\mathcal{J}$ (family $\neq$ generator); repeats $k$
+\Ensure verdict per item and $\vdrate$
+\State $\mathcal{R}\gets\varnothing$
+\ForAll{$(q,\mathcal{O},y,T,L,v)\in\mathcal{I}$}
+  \If{$v=\varnothing$} \State skip and record \textsc{no\_image}; \textbf{continue} \EndIf
+  \State $\mathrm{fp}\gets\mathrm{SHA256}(\mathrm{canon}(q,\mathcal{O},T))$
+  \ForAll{$\mathrm{arm}\in\{+,-\}$, $r\in\{1,\dots,k\}$}
+    \State $\hat{y}\gets\mathcal{J}(\pi_{\mathrm{arm}})$ \Comment{returns only \texttt{answer\_index}}
+    \State record $(\mathrm{fp},\mathrm{arm},r,\hat{y},[\hat{y}=y])$
+  \EndFor
+  \State \textbf{assert} one $\mathrm{fp}$, both arms present, image present iff $\mathrm{arm}=+$
+  \State $\mu_{+},\mu_{-}\gets$ majority correctness per arm (failed trials excluded)
+  \State $\mathcal{R}\gets\mathcal{R}\cup\{\text{verdict by Eq.~\eqref{eq:verdict}}\}$
+\EndFor
+\State \Return $\mathcal{R}$, $\vdrate$ by Eq.~\eqref{eq:vdr}
+\end{algorithmic}
+\end{algorithm}
+
+No step of Algorithm~\ref{alg:vd} recomputes the item, so every verdict is
+replayable from the recorded trial ledger without network access.
+
+\section{Experimental Setup}
+\label{sec:setup}
+We evaluate 16 screened chunks from 9 Vietnamese law textbooks. Chunk screening,
+image--page verification and package construction are recorded in a versioned
+manifest of 48 evidence packages and 18 verified page images; every request is
+keyed to the manifest digest \texttt{dac6ba98\ldots}, and each attached image is
+re-hashed at call time, so a cell can be replayed against the exact bytes it
+consumed. Crossing 16 chunks with 3 evidence conditions gives the 48-cell
+construction matrix in Table~\ref{tab:design}.
+
+\begin{table}[t]
+\centering
+\caption{Design of the construction and ablation experiments.}
+\label{tab:design}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lcc}
+\hline
+Factor & Levels & Cells/calls \\
+\hline
+Source contexts & 16 chunks from 9 textbooks & 16 \\
+Evidence condition & $\T$, $\TL$, $\TLV$ & 3 \\
+Construction matrix & $16\times3$ & 48 cells \\
+Generator calls & 2 stages per cell & 96 \\
+Verified page images & aligned to $\TLV$ packages & 18 \\
+Ablation items & contract-passing $\TLV$ items & 8 \\
+Ablation calls & 2 arms $\times$ 3 repeats & 48 \\
+\hline
+\end{tabular}
+}%
+\end{table}
+
+Three model roles are held disjoint by family to avoid self-preference. The
+generator for all 48 cells is \texttt{qwen3-vl-32b-instruct} (temperature $0$,
+seed $20260806$, both stages). The ablation answerer is
+\texttt{gemini-2.5-flash} with $k=3$ repeats per arm. The judges used in the
+supporting rubric study (Section~\ref{sec:judge}) are \texttt{claude-sonnet-5} and
+\texttt{gpt-5.6-terra}. The answerer and both judges are therefore from families
+disjoint from the generator and from each other.
+
+Because the ablation answerer is a model, $\vdrate$ is a model-based
+operationalisation of visual necessity for that answerer. It is not a claim about
+human respondents; no human or expert anchor is included in this study.
+
+\section{Does the Cross-Modal Contract Change Construction?}
+\label{sec:mechanism}
+We first measure what Eq.~\eqref{eq:admissible} buys, holding the generator, seed,
+manifest, prompts and guard thresholds fixed and manipulating only the catalog
+exposed under $\TLV$. The pre-contract run offered all text-only motifs under
+$\TLV$; the post-contract run restricts $\TLV$ to $\mathcal{M}_V$. Pairing is by
+chunk, so each chunk contributes one before/after pair
+(Table~\ref{tab:mechanism}).
+
+\begin{table}[t]
+\centering
+\caption{Effect of the cross-modal contract on the $\TLV$ condition, paired by
+chunk ($n=16$). Rejection families are counts over the 16 $\TLV$ cells.}
+\label{tab:mechanism}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lcc}
+\hline
+Quantity & Pre-contract & Post-contract \\
+\hline
+$\TLV$ contract passes & 2/16 & \textbf{8/16} \\
+\textsc{ungrounded\_steps} rejections & 9 & 1 \\
+\textsc{no\_visual\_binding} rejections & 4 & 0 \\
+\textsc{invalid\_json} rejections & 0 & 6 \\
+\textsc{anti\_verbatim} rejections & 1 & 0 \\
+\textsc{step\_count\_mismatch} rejections & 0 & 1 \\
+\hline
+\multicolumn{3}{l}{Discordant chunks: 7 pass only post, 1 only pre} \\
+\multicolumn{3}{l}{Exact McNemar $p=0.070$} \\
+\hline
+\end{tabular}
+}%
+\end{table}
+
+The contract quadruples the $\TLV$ pass rate, from 2/16 to 8/16, with 7 chunks
+gained and 1 lost. The exact McNemar test on those 8 discordant chunks gives
+$p=0.070$, so at $n=16$ the improvement is a consistent directional effect that
+this sample does not establish at the $0.05$ level. The mechanistic evidence is
+stronger than the $p$-value alone. The two rejection families that the contract
+targets both collapse: \textsc{ungrounded\_steps} falls from 9 to 1 and
+\textsc{no\_visual\_binding} from 4 to 0. Under the pre-contract catalog, the
+generator chose a text-only motif under $\TLV$ (for example
+\texttt{hierarchy\_traverse}), earned no exemption for any step, and then failed
+text-anchor matching. That failure mode is removed by construction, not by
+loosening a threshold: no guard parameter differs between the two runs.
+
+The gain is not free. Rejections shift into \textsc{invalid\_json}, from 0 to 6:
+emitting a cross-modal plan with a bounding box is a harder formatting task, and
+the current runner retries transport failures only, never contract failures. Six
+of the eight post-contract $\TLV$ rejections are therefore formatting faults rather
+than reasoning faults, which bounds how much of the remaining headroom is about
+multimodal competence at all.
+
+\begin{table}[t]
+\centering
+\caption{Contract pass rate by condition under the cross-modal contract
+($16$ chunks per condition, Wilson 95\% CI). No paired contrast is significant.}
+\label{tab:passrate}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lccc}
+\hline
+Condition & Passes & Rate & Wilson 95\% CI \\
+\hline
+$\T$ & 6/16 & 0.375 & $[0.185,0.614]$ \\
+$\TL$ & 6/16 & 0.375 & $[0.185,0.614]$ \\
+$\TLV$ & 8/16 & 0.500 & $[0.280,0.720]$ \\
+\hline
+\multicolumn{4}{l}{$\TLV$ vs $\T$: 5 vs 3 discordant, $p=0.727$} \\
+\multicolumn{4}{l}{$\TLV$ vs $\TL$: 5 vs 3 discordant, $p=0.727$} \\
+\multicolumn{4}{l}{$\TL$ vs $\T$: 1 vs 1 discordant, $p=1.000$} \\
+\hline
+\end{tabular}
+}%
+\end{table}
+
+Across conditions (Table~\ref{tab:passrate}), $\TLV$ has the highest pass rate at
+$0.500$ against $0.375$ for both text conditions, but no paired contrast approaches
+significance (exact McNemar $p=0.727$ for both comparisons involving $\TLV$). The
+confidence intervals overlap substantially. We therefore claim only that the
+contract removes the degeneracy of the visual condition; we do not claim that the
+visual condition is easier or harder to satisfy than the text conditions.
+
+\section{Does the Contract Deliver Visual Necessity?}
+\label{sec:vdresults}
+All 8 contract-passing $\TLV$ items bind a declared image, commit a bounding box
+satisfying Eq.~\eqref{eq:vc2}, and report an observation. By every
+construction-side check they are multimodal. Algorithm~\ref{alg:vd} tests whether
+they are, at the item level, with 48 answerer calls and no failed trials
+(Table~\ref{tab:vd}).
+
+\begin{table}[t]
+\centering
+\caption{Visual-dependence ablation over the 8 contract-passing $\TLV$ items
+(\texttt{gemini-2.5-flash}, $k=3$ repeats per arm, 48 calls, 0 failed trials).}
+\label{tab:vd}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lcc}
+\hline
+Verdict (Eq.~\eqref{eq:verdict}) & Items & Share \\
+\hline
+\textsc{text\_sufficient} & 6 & 0.750 \\
+\textsc{unanswerable} & 1 & 0.125 \\
+\textsc{visual\_dependent} & 1 & 0.125 \\
+\textsc{indeterminate} & 0 & 0.000 \\
+\hline
+$\vdrate$ (Eq.~\eqref{eq:vdr}) & \multicolumn{2}{c}{$0.125$, Wilson 95\% CI $[0.022,0.471]$} \\
+Mean accuracy with image & \multicolumn{2}{c}{$0.875$} \\
+Mean accuracy without image & \multicolumn{2}{c}{$0.875$} \\
+Paired with vs without image & \multicolumn{2}{c}{1 vs 1 discordant, $p=1.000$} \\
+$\vdrate$ vs chance $0.25$ & \multicolumn{2}{c}{$p=0.689$} \\
+\hline
+\end{tabular}
+}%
+\end{table}
+
+The result is negative and unambiguous in direction. Only 1 of 8 items requires the
+image. Six are text-sufficient: the answerer is correct in all three repeats of
+both arms, so the image is decorative with respect to answering. Mean accuracy is
+identical with and without the image ($0.875$ versus $0.875$), and the paired test
+over items is exactly null (1 versus 1 discordant, $p=1.000$). The interval
+$[0.022,0.471]$ contains the chance rate $0.25$, and $\vdrate$ does not differ from
+chance ($p=0.689$), so this sample cannot even establish that $\vdrate$ exceeds
+guessing.
+
+One item is \textsc{unanswerable}: the answerer is wrong in all three with-image
+repeats and correct in all three without-image repeats. Attaching the page image
+actively degraded answering. Separating this verdict from
+\textsc{visual\_dependent} matters --- a criterion that only asked ``did accuracy
+change?'' would have counted this item as evidence for visual dependence when it is
+evidence of a defective item.
+
+Taken with Section~\ref{sec:mechanism}, the two experiments answer two different
+questions and give opposite verdicts. The contract demonstrably changes
+construction: the planner now must read the image, and the rejection families prove
+it. The contract does not change the item: 8/8 pass the cross-modal guards while
+1/8 needs the image. Structural cross-modal checks are necessary but not sufficient,
+and no pass-rate statistic could have revealed this, because pass rate is computed
+from the same contract it would have to falsify.
+
+A diagnostic observation supports the same conclusion from a third direction. In a
+pilot of three $\TLV$ cells on unrelated documents --- a world map and a civil
+procedure flowchart --- two items emitted the identical bounding box
+$[0.12,0.34,0.48,0.52]$. Eq.~\eqref{eq:vc2} validates format, not correctness of
+localisation, so a habitual box passes. Bounding-box verification against the
+rendered region, rather than against a format predicate, is the concrete next step
+this finding identifies.
+
+\section{Supporting Rubric Study}
+\label{sec:judge}
+A separate rubric study on an earlier generation matrix provides two facts that
+bear on the interpretation above and are reported for completeness rather than as
+evidence about the contract, which post-dates it. Two blinded judges from
+disjoint families (\texttt{claude-sonnet-5}, \texttt{gpt-5.6-terra}) scored items
+on faithfulness, answerability, distractor quality and reasoning depth under choice
+permutation and condition blinding. Quadratic-weighted $\kappa$ ranged from
+$0.369$ (distractor quality) to $0.686$ (answerability), i.e.\ moderate agreement,
+substantial only for answerability; agreement within one scale point exceeded
+$0.95$ on all four dimensions. Rubric scores are therefore reported as descriptive
+agreement, not as semantic or legal validity. Second, absolute levels were far more
+informative than contrasts: faithfulness and answerability sat near the top of the
+scale while reasoning depth sat near the bottom, and the only dimension with a
+significant Friedman result was depth ($p=0.024$), whose pairwise contrasts did not
+survive Holm correction. Grounding was not the binding constraint; depth was. The
+present paper adds that visual necessity is a second binding constraint, and unlike
+depth it is not visible to a rubric at all --- a text-sufficient item can score
+maximally on all four dimensions.
+
+\section{Limitations}
+Six limitations bound these results. First, scale: 16 chunks and 8 ablation items
+give low power, and the absence of significance in
+Tables~\ref{tab:mechanism}--\ref{tab:vd} is not evidence of equivalence; the
+mechanism effect at $p=0.070$ and $\vdrate$ at $[0.022,0.471]$ both need a larger
+corpus. Second, $\vdrate$ is model-based: it operationalises visual necessity for
+one answerer from one family, and a stronger or weaker answerer would move it in
+ways this design cannot separate from item properties. No human or expert anchor is
+included. Third, the ablation removes the image entirely, so it measures necessity
+of the page image as a whole and not of the specific region named by the bounding
+box; a region-level ablation would be a sharper test. Fourth, the 6
+\textsc{invalid\_json} rejections under the contract mean the post-contract pass
+rate underestimates achievable performance for formatting reasons unrelated to
+multimodal competence. Fifth, bounding boxes are validated for format only, and the
+repeated-box observation shows this admits habitual output; we report it as a
+diagnosis, not as a quantified error rate. Sixth, results are specific to one
+open-weight vision--language generator, page-level image granularity, Vietnamese
+legal textbooks, and the prompts used here.
+
+\section{Conclusion}
+We argued that a visual \emph{condition label} does not make a textbook question
+multimodal, and we replaced it with two artefacts. On the construction side, an
+executable cross-modal contract makes a visual anchor a compile-time requirement:
+under the visual condition only cross-modal motifs are admissible, and a visual
+step must bind a declared image, a normalised bounding box and an observation. This
+raised the visual-condition pass rate from 2/16 to 8/16 and collapsed the
+ungrounded-anchor and missing-visual-binding rejection families, with all other
+factors held fixed. On the item side, the visual-dependence rate $\vdrate$ supplies
+the falsifiable test that construction checks structurally cannot provide, and it
+returned a negative verdict on our own pipeline: 8/8 items satisfy the cross-modal
+guards, 1/8 needs the image, and answerer accuracy is identical with and without
+it. We report that negative result as the paper's primary empirical finding.
+Structural guards are necessary; only an ablation can certify necessity. The next
+steps this identifies are concrete: verify bounding boxes against rendered regions
+rather than a format predicate, ablate at region rather than page granularity, and
+select for $\vdrate$ during construction instead of measuring it afterwards.
+
+\section*{Acknowledgment}
+The authors thank the Institute of Open Education and Information Technology, Hue University, for providing research data and a laboratory environment for this study.
+
+\section*{Funding}
+This work was supported by project DHH2026.
+
+\section*{Data, Code, and Materials Availability}
+Code, deterministic self-tests, the visual-dependence runner, the ablation trial
+ledger and the statistical audit are available at
+\url{https://github.com/mxuanvan02/TQA_Pipeline}. Access to source textbooks, page
+images and detailed model records follows the applicable permissions and rights
+review; derivative release materials are provided through the documented release
+channel.
+
+\section*{Conflict of Interest}
+The authors declare no competing interests.
+
+\section*{Generative-AI Use Disclosure}
+Generative-AI tools were used to assist with grammar editing, code development, and figure preparation.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+\end{document}

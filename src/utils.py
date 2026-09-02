@@ -79,7 +79,7 @@ def load_json(path: Path) -> Any:
     if not path.exists():
         raise FileNotFoundError(f"JSON file not found: {path}")
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
         data = json.load(f)
 
     logger.info("Loaded JSON: %s (%d top-level items)", path.name, len(data) if isinstance(data, list) else 1)
@@ -387,7 +387,7 @@ def load_drive_checkpoint(
         return None
 
     try:
-        with open(drive_path, "r", encoding="utf-8") as f:
+        with open(drive_path, "r", encoding="utf-8", errors="replace") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError) as e:
         logger.warning("  ⚠️  Corrupt checkpoint on Drive: %s (%s)", drive_path.name, e)

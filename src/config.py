@@ -13,6 +13,7 @@ Output: Importable constants & dataclass singletons.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -36,29 +37,75 @@ logger = logging.getLogger("tqa_pipeline")
 class PathConfig:
     """Immutable directory layout for the entire pipeline."""
 
-    root: Path = Path("/content/TQA_Pipeline")
+    root: Path = field(
+        default_factory=lambda: Path(os.environ.get("TQA_ROOT", str(Path(__file__).resolve().parent.parent)))
+    )
 
-    # Data directories
-    raw: Path = field(default=Path("/content/TQA_Pipeline/data/raw"))
-    interim: Path = field(default=Path("/content/TQA_Pipeline/data/interim"))
-    processed: Path = field(default=Path("/content/TQA_Pipeline/data/processed"))
+    # Data directories (auto-resolved in __post_init__)
+    raw: Path = field(default=Path("data/raw"))
+    interim: Path = field(default=Path("data/interim"))
+    processed: Path = field(default=Path("data/processed"))
 
-    # Interim sub-paths (created lazily by each stage)
-    interim_images: Path = field(
-        default=Path("/content/TQA_Pipeline/data/interim/images")
-    )
-    multimodal_contexts: Path = field(
-        default=Path("/content/TQA_Pipeline/data/interim/multimodal_contexts.json")
-    )
-    raw_qa_pairs: Path = field(
-        default=Path("/content/TQA_Pipeline/data/interim/raw_qa_pairs.json")
-    )
-    filtered_qa_pairs: Path = field(
-        default=Path("/content/TQA_Pipeline/data/interim/filtered_qa_pairs.json")
-    )
-    dataset_jsonl: Path = field(
-        default=Path("/content/TQA_Pipeline/data/processed/dataset.jsonl")
-    )
+    # Interim sub-paths (auto-resolved in __post_init__)
+    interim_images: Path = field(default=Path("data/interim/images"))
+    multimodal_contexts: Path = field(default=Path("data/interim/multimodal_contexts.json"))
+    raw_qa_pairs: Path = field(default=Path("data/interim/raw_qa_pairs.json"))
+    filtered_qa_pairs: Path = field(default=Path("data/interim/filtered_qa_pairs.json"))
+    dataset_jsonl: Path = field(default=Path("data/processed/dataset.jsonl"))
+
+    def __post_init__(self) -> None:
+        root = Path(os.environ.get("TQA_ROOT", str(self.root))).expanduser()
+
+        # Prefer explicit override; otherwise auto-detect old/new dataset layout.
+        data_dir_override = os.environ.get("TQA_DATA_DIR")
+        if data_dir_override:
+            data_base = Path(data_dir_override).expanduser()
+        else:
+            default_data_base = root / "data"
+            legacy_output_base = default_data_base / "output"
+            # Score candidate layouts and pick the one that actually has
+            # the most pipeline artifacts (helps resume from Stage 3/4).
+            def _score(base: Path) -> int:
+                score = 0
+                if (base / "raw").exists():
+                    score += 1
+                    try:
+                        if any((base / "raw").glob("*.pdf")) or any((base / "raw").glob("*.PDF")):
+                            score += 1
+                    except Exception:
+                        pass
+
+                if (base / "interim").exists():
+                    score += 1
+                if (base / "interim" / "multimodal_contexts.json").exists():
+                    score += 4
+                try:
+                    if any((base / "interim" / "contexts").glob("*.json")):
+                        score += 3
+                except Exception:
+                    pass
+                try:
+                    if any((base / "interim" / "qa_chunks").glob("*.json")):
+                        score += 2
+                except Exception:
+                    pass
+                if (base / "processed" / "dataset.jsonl").exists():
+                    score += 4
+                return score
+
+            default_score = _score(default_data_base)
+            legacy_score = _score(legacy_output_base)
+            data_base = legacy_output_base if legacy_score > default_score else default_data_base
+
+        object.__setattr__(self, "root", root)
+        object.__setattr__(self, "raw", data_base / "raw")
+        object.__setattr__(self, "interim", data_base / "interim")
+        object.__setattr__(self, "processed", data_base / "processed")
+        object.__setattr__(self, "interim_images", data_base / "interim" / "images")
+        object.__setattr__(self, "multimodal_contexts", data_base / "interim" / "multimodal_contexts.json")
+        object.__setattr__(self, "raw_qa_pairs", data_base / "interim" / "raw_qa_pairs.json")
+        object.__setattr__(self, "filtered_qa_pairs", data_base / "interim" / "filtered_qa_pairs.json")
+        object.__setattr__(self, "dataset_jsonl", data_base / "processed" / "dataset.jsonl")
 
     def ensure_dirs(self) -> None:
         """Create every directory if it does not already exist."""
@@ -73,30 +120,139 @@ class PathConfig:
 class VLMConfig:
     """Vision-Language Model settings (Stage 2 — image description)."""
 
-    model_name: str = "5CD-AI/Vintern-1B-v3_5"  # Best lightweight VLM for Vietnamese
-    # Fallback: "Qwen/Qwen2-VL-2B-Instruct"
+    model_name: str = "5CD-AI/Vintern-1B-v3_5"
     torch_dtype: str = "float16"
     load_in_4bit: bool = True
     max_new_tokens: int = 512
     temperature: float = 0.3
     device_map: str = "auto"
-    batch_size: int = 16             # images per VLM batch (L4: true batched inference)
+    batch_size: int = 16
 
 
 @dataclass(frozen=True)
 class LLMConfig:
     """Text-only LLM settings (Stage 3 — QAG, Stage 4 — Evaluation)."""
 
-    model_name: str = "Qwen/Qwen2.5-0.5B-Instruct"  # Fallback: "Qwen/Qwen2.5-1.5B-Instruct" or "Qwen/Qwen2.5-3B-Instruct"
+    model_name: str = "Qwen/Qwen2.5-7B-Instruct-AWQ"
     torch_dtype: str = "bfloat16"
     load_in_4bit: bool = True
-    use_vllm: bool = True             # Primary offline inference engine
-    max_new_tokens: int = 512         # Reduced from 1024 for faster generation
-    temperature: float = 0.7          # for creative QA generation
-    eval_temperature: float = 0.1     # deterministic evaluation
+    use_vllm: bool = True
+    max_new_tokens: int = 512
+    temperature: float = 0.7
+    eval_temperature: float = 0.1
     top_p: float = 0.9
     device_map: str = "auto"
     repetition_penalty: float = 1.15
+
+
+@dataclass(frozen=True)
+class BenchmarkConfig:
+    """Settings for external benchmark model APIs (OpenAI-compatible)."""
+
+    model_name: str = field(
+        default_factory=lambda: os.environ.get("BENCHMARK_MODEL_NAME", "openai/gpt-oss-20b")
+    )
+    api_base: str = field(
+        default_factory=lambda: os.environ.get("BENCHMARK_API_BASE", "http://localhost:1234/v1")
+    )
+    api_key: str = field(
+        default_factory=lambda: os.environ.get("BENCHMARK_API_KEY", "")
+    )
+    max_tokens: int = 16
+    temperature: float = 0.0
+
+
+# ─────────────────────────────────────────────
+# 2b · Model-Role Assignment (leakage-safe)
+# ─────────────────────────────────────────────
+@dataclass(frozen=True)
+class ModelRolesConfig:
+    """Central, leakage-safe assignment of a concrete model to each pipeline role.
+
+    Scientific constraint (why this is one place, not scattered defaults):
+      In a synthetic benchmark, the model that GENERATES data, the model that
+      JUDGES/filters it, and the models that are BENCHMARKED must be mutually
+      distinct. Any overlap creates self-reinforcement (judge favors its own
+      family) or home-advantage (a benchmarked model graded its own output),
+      which a reviewer will flag. Keeping every role here makes that separation
+      auditable at a glance and keeps it in sync with the manuscript.
+
+    Defaults target the 9Router gateway (OpenAI-compatible) so no GPU is needed;
+    every field is env-overridable for reproducible runs on other endpoints.
+    Model ids are gateway route ids; ``*_paper`` fields are the human-facing
+    names used verbatim in the manuscript so code and paper never drift.
+    """
+
+    # Gateway shared by all API-served roles (host view of 9Router).
+    gateway_base: str = field(
+        default_factory=lambda: os.environ.get(
+            "TQA_GATEWAY_BASE", "http://127.0.0.1:20128/v1"
+        )
+    )
+
+    # Stage 3 — QA generation (text). Was Qwen2.5-7B-AWQ (produced CJK/label bugs).
+    generator: str = field(
+        default_factory=lambda: os.environ.get(
+            "TQA_GENERATOR_MODEL", "groq/llama-3.1-8b-instant"
+        )
+    )
+    generator_paper: str = "Llama-3.1-8B-Instruct"
+
+    # Stage 4 — QA judge/filter (text). MUST differ in family from the generator.
+    judge: str = field(
+        default_factory=lambda: os.environ.get(
+            "TQA_JUDGE_MODEL", "groq/openai/gpt-oss-20b"
+        )
+    )
+    judge_paper: str = "GPT-OSS-20B"
+
+    # Tier B — process-graph extraction (vision). Multiple VLMs compared (T1).
+    vision_extractors: tuple[str, ...] = (
+        "vx/gemini-2.5-flash",
+        "cf/@cf/mistralai/mistral-small-3.1-24b-instruct",
+        "if/qwen3-vl-plus",
+    )
+    vision_extractors_paper: tuple[str, ...] = (
+        "Gemini-2.5-Flash",
+        "Mistral-Small-3.1-24B",
+        "Qwen3-VL",
+    )
+
+    # Tier C — graph reasoning / answer verbalization (text).
+    reasoner: str = field(
+        default_factory=lambda: os.environ.get(
+            "TQA_REASONER_MODEL", "groq/llama-3.3-70b-versatile"
+        )
+    )
+    reasoner_paper: str = "Llama-3.3-70B-Instruct"
+
+    # Benchmark subjects (models under evaluation). Excludes generator+judge to
+    # avoid home-advantage; spread across families for a fair leaderboard.
+    benchmark_subjects: tuple[str, ...] = (
+        "groq/qwen/qwen3-32b",
+        "cf/@cf/mistralai/mistral-small-3.1-24b-instruct",
+        "groq/openai/gpt-oss-120b",
+        "vx/gemini-2.5-flash",
+        "cf/@cf/meta/llama-3.2-3b-instruct",
+    )
+    benchmark_subjects_paper: tuple[str, ...] = (
+        "Qwen3-32B",
+        "Mistral-Small-3.1-24B",
+        "GPT-OSS-120B",
+        "Gemini-2.5-Flash",
+        "Llama-3.2-3B",
+    )
+
+    def assert_no_leakage(self) -> list[str]:
+        """Return a list of leakage violations (empty = safe). Cheap, no I/O."""
+        problems: list[str] = []
+        if self.generator == self.judge:
+            problems.append("generator == judge (self-reinforcement)")
+        if self.generator in self.benchmark_subjects:
+            problems.append("generator is also a benchmark subject (home-advantage)")
+        if self.judge in self.benchmark_subjects:
+            problems.append("judge is also a benchmark subject (home-advantage)")
+        return problems
 
 
 # ─────────────────────────────────────────────
@@ -147,20 +303,52 @@ class QAGConfig:
         "Apply",         # Level 3 — apply to new scenario
     )
     questions_per_level: int = 1      # per chunk, per Bloom level
-    batch_size: int = 256             # Large batch to feed vLLM continuous batching scheduler
+    batch_size: int = 64              # Tối ưu hóa cho NVIDIA L4 GPU (24GB VRAM)
     merge_bloom_levels: bool = True   # merge all bloom levels into one GPU call (3× speedup)
 
 
 @dataclass(frozen=True)
 class EvalConfig:
-    """LLM-as-a-judge binary scoring (Stage 4, optimized for 0.5B model)."""
+    """
+    LLM-as-a-judge binary scoring (Stage 4).
+    """
 
-    groundedness_threshold: float = 1.0     # 1 (Pass) or 0 (Fail)
-    multimodal_alignment_threshold: float = 1.0 # 1 (Pass) or 0 (Fail)
-    legal_fluency_threshold: float = 1.0    # 1 (Pass) or 0 (Fail)
-    overall_threshold: float = 1.0          # Must pass all to be included
-    score_scale: int = 1                    # Binary indicator
-    batch_size: int = 512                   # Massive batch size for tiny output (256-token)
+    judge_model_name: str = "google/gemma-2-2b-it"
+    fallback_judge_model_name: str = "microsoft/Phi-3-mini-4k-instruct"
+
+    groundedness_threshold: float = 1.0
+    multimodal_alignment_threshold: float = 1.0
+    legal_fluency_threshold: float = 1.0
+    overall_threshold: float = 1.0
+    score_scale: int = 1
+    batch_size: int = 64
+
+    legal_grounding_template: str = """
+[Bối cảnh pháp lý]: {context}
+[Câu hỏi]: {question}
+[Câu trả lời candidate]: {answer}
+
+NHIỆM VỤ: Bạn là một Thẩm phán nghiêm khắc. Hãy kiểm tra xem Câu trả lời có sử dụng bất kỳ thông tin nào KHÔNG nằm trong [Bối cảnh pháp lý] ở trên không? 
+Đặc biệt chú ý đến: Tên văn bản, Số hiệu điều luật, và các mốc thời gian.
+
+CHỈ TRẢ VỀ JSON:
+{{
+  "is_grounded": true/false,
+  "unsupported_facts": ["danh sách các ý kiến bịa đặt"],
+  "score": 0-1
+}}
+"""
+
+    bloom_classifier_template: str = """
+Câu hỏi: {question}
+
+NHIỆM VỤ: Phân loại câu hỏi này vào một trong 3 cấp độ Bloom:
+1. 'Remember': Hỏi trực tiếp về định nghĩa, số liệu trong luật.
+2. 'Understand': Yêu cầu giải thích ý nghĩa hoặc tóm tắt nội dung điều luật.
+3. 'Apply': Đưa ra tình huống thực tế và hỏi cách áp dụng điều luật này.
+
+CHỈ TRẢ VỀ MỘT TỪ DUY NHẤT: [Remember|Understand|Apply]
+"""
 
 
 # ─────────────────────────────────────────────
@@ -175,7 +363,7 @@ class MarkerConfig:
     paginate_output: bool = True
     output_format: str = "markdown"
     batch_multiplier: int = 12        # marker batch multiplier (L4 optimized — higher fills VRAM)
-    parallel_workers: int = 2          # concurrent PDF processes (2×7GB ≈ 14GB on L4)
+    parallel_workers: int = 3          # L4 có ~24GB VRAM, 3 workers (3x7=21GB) là mức tối đa an toàn. Không nên lên 4.
 
     # Explicit surya batch sizes (override auto-detection for L4 GPU)
     # These are set as env vars BEFORE surya imports
@@ -200,38 +388,42 @@ class DriveBackupConfig:
             replaces hardcoded paths scattered across multiple files.
     """
 
-    drive_root: Path = Path("/content/drive/MyDrive")
+    drive_root: Path = field(
+        default_factory=lambda: Path(os.environ.get("TQA_DRIVE_ROOT", "/content/drive/MyDrive"))
+    )
     backup_base: Path = field(
-        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup")
+        default=Path("Colab_Workspaces/TQA_Pipeline_Backup_7B")
     )
 
-    # Stage 1 — Digitization
-    interim_md: Path = field(
-        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim")
-    )
-    interim_images: Path = field(
-        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/images")
-    )
+    # Stage 1 — Digitization (auto-resolved in __post_init__)
+    interim_md: Path = field(default=Path("interim"))
+    interim_images: Path = field(default=Path("interim/images"))
 
-    # Stage 2 — Structuring
-    contexts_dir: Path = field(
-        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/contexts")
-    )
+    # Stage 2 — Structuring (auto-resolved in __post_init__)
+    contexts_dir: Path = field(default=Path("interim/contexts"))
 
-    # Stage 3 — QAG
-    qa_chunks_dir: Path = field(
-        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/qa_chunks")
-    )
+    # Stage 3 — QAG (auto-resolved in __post_init__)
+    qa_chunks_dir: Path = field(default=Path("interim/qa_chunks"))
 
-    # Stage 4 — Evaluation
-    evaluated_qa_dir: Path = field(
-        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/interim/evaluated_qa")
-    )
+    # Stage 4 — Evaluation (auto-resolved in __post_init__)
+    evaluated_qa_dir: Path = field(default=Path("interim/evaluated_qa"))
 
-    # Final outputs
-    processed_dir: Path = field(
-        default=Path("/content/drive/MyDrive/Colab_Workspaces/TQA_Pipeline_Backup/processed")
-    )
+    # Final outputs (auto-resolved in __post_init__)
+    processed_dir: Path = field(default=Path("processed"))
+
+    def __post_init__(self) -> None:
+        drive_root = Path(os.environ.get("TQA_DRIVE_ROOT", str(self.drive_root))).expanduser()
+        backup_override = os.environ.get("TQA_BACKUP_BASE")
+        backup_base = Path(backup_override).expanduser() if backup_override else drive_root / "Colab_Workspaces" / "TQA_Pipeline_Backup_7B"
+
+        object.__setattr__(self, "drive_root", drive_root)
+        object.__setattr__(self, "backup_base", backup_base)
+        object.__setattr__(self, "interim_md", backup_base / "interim")
+        object.__setattr__(self, "interim_images", backup_base / "interim" / "images")
+        object.__setattr__(self, "contexts_dir", backup_base / "interim" / "contexts")
+        object.__setattr__(self, "qa_chunks_dir", backup_base / "interim" / "qa_chunks")
+        object.__setattr__(self, "evaluated_qa_dir", backup_base / "interim" / "evaluated_qa")
+        object.__setattr__(self, "processed_dir", backup_base / "processed")
 
     def is_drive_mounted(self) -> bool:
         """Check if Google Drive is actually mounted (not just a local dir).
@@ -290,13 +482,10 @@ class DriveBackupConfig:
 # ─────────────────────────────────────────────
 @dataclass(frozen=True)
 class GPUOptConfig:
-    """GPU optimization settings tuned for NVIDIA L4 (22.5 GB VRAM).
+    """GPU optimization settings.
 
     Who:    All pipeline stages.
     How:    Controls batch sizes, data prefetching, and memory management.
-    Why:    4-bit quantized models (Vintern-1B ~700MB, Qwen-0.5B ~400MB)
-            leave >20 GB VRAM free. Batching fills the GPU pipeline,
-            raising utilization from ~5% to 60-80%.
     """
 
     # Data loading
@@ -308,21 +497,18 @@ class GPUOptConfig:
     empty_cache_interval: int = 50     # torch.cuda.empty_cache() every N batches
     log_gpu_interval: int = 10         # log VRAM usage every N batches
 
-    # torch.compile for text LLMs (Qwen — ~20-40% inference speedup)
-    use_torch_compile: bool = True     # enable for Qwen2.5 on PyTorch 2.x
-    compile_mode: str = "reduce-overhead"  # "default", "reduce-overhead", "max-autotune"
+    use_torch_compile: bool = True
+    compile_mode: str = "reduce-overhead"
 
     # torch.backends optimizations for inference
     cudnn_benchmark: bool = True       # auto-tune convolution algorithms
     matmul_precision: str = "medium"   # trade precision for speed (float32 matmul)
 
-    # VLM batching (InternVL2/Vintern models)
-    enable_vlm_batch: bool = True      # attempt batched VLM inference (fallback if fail)
+    enable_vlm_batch: bool = True
 
-    # vLLM optimization
-    vllm_gpu_utilization: float = 0.90 # % VRAM reserved for vLLM KV cache
-    vllm_max_num_seqs: int = 1024      # Max concurrent sequences (pushes GPU scheduler to 100%)
-    async_drive_io: bool = True        # run checkpointing in background threads
+    vllm_gpu_utilization: float = 0.90
+    vllm_max_num_seqs: int = 1024
+    async_drive_io: bool = True
 
 
 # ─────────────────────────────────────────────
@@ -342,7 +528,7 @@ class TQARecord(BaseModel):
     """Final JSONL schema definition — one record per QA pair."""
 
     qa_id: str = Field(..., description="Unique identifier: <doc>_<chunk>_<bloom>_<seq>")
-    domain_tag: str = Field(default="civil_law", description="Subject domain")
+    domain_tag: str = Field(default="unknown", description="Subject domain or inferred source-textbook group")
     bloom_level: str = Field(default="", description="Bloom's Taxonomy level: Remember/Understand/Apply")
     context_payload: ContextPayload
     question_content: str
@@ -378,6 +564,8 @@ class PipelineConfig:
     marker: MarkerConfig = field(default_factory=MarkerConfig)
     drive_backup: DriveBackupConfig = field(default_factory=DriveBackupConfig)
     gpu: GPUOptConfig = field(default_factory=GPUOptConfig)
+    benchmark: BenchmarkConfig = field(default_factory=BenchmarkConfig)
+    model_roles: ModelRolesConfig = field(default_factory=ModelRolesConfig)
 
 
 # Instantiate the global config

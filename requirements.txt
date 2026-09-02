@@ -25,6 +25,8 @@ Pillow>=10.0.0
 
 # --- Utilities ---
 tqdm>=4.66.0
+sentencepiece>=0.2.0      # tokenizer runtime for Gemma/Mistral and related models
 
-# --- Fast Inference ---
+# --- Fast Inference & API ---
 vllm>=0.6.0
+openai>=1.0.0
